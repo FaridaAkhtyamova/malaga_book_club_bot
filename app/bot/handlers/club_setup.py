@@ -25,7 +25,7 @@ from app.services.cycle_service import (
     chunk_books_for_polls,
     month_name_ru,
 )
-from app.services.meeting_poll import meeting_poll_options
+from app.services.meeting_poll import meeting_poll_options, meeting_poll_title
 from app.services.vote_close import VoteCounts, winner_announcement
 
 router = Router()
@@ -176,8 +176,23 @@ async def cmd_close_vote(
         except TelegramAPIError as exc:
             await message.answer(f"Книга выбрана, но анонс не отправился: {exc}")
             return
+        try:
+            await publish_meeting_poll(
+                bot,
+                dest,
+                meeting_poll_title(winner),
+                meeting_poll_options(),
+            )
+        except TelegramAPIError as exc:
+            await message.answer(
+                f"Книга выбрана, но опрос дат встречи не отправился: {exc}\n"
+                "Можно повторить командой /start_meeting_poll."
+            )
+            return
         if not same_thread:
-            await message.answer("Голосование закрыто, выбранная книга опубликована в группе.")
+            await message.answer(
+                "Голосование закрыто. Опрос дат встречи опубликован в группе."
+            )
         return
 
     chunks = chunk_books_for_polls(leaders)
@@ -208,7 +223,16 @@ async def cmd_start_meeting_poll(
         await message.answer(str(exc))
         return
 
-    await publish_meeting_poll(bot, dest, book.title, meeting_poll_options())
+    try:
+        await publish_meeting_poll(
+            bot,
+            dest,
+            meeting_poll_title(book),
+            meeting_poll_options(),
+        )
+    except TelegramAPIError as exc:
+        await message.answer(f"Не удалось опубликовать опрос дат: {exc}")
+        return
     same_thread = (
         message.chat.id == dest.chat_id and message.message_thread_id == dest.message_thread_id
     )

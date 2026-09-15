@@ -2,12 +2,13 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
+from app.db.models import Book
 
-STUB_SELECTED_BOOK_TITLE = "Книга месяца (заглушка)"
 DATE_OPTION_COUNT = 10
 DATE_OFFSET_DAYS = 2
 OPTION_UNREAD = "не прочитала"
 OPTION_SKIP = "пропущу"
+POLL_QUESTION_LIMIT = 300
 
 WEEKDAYS_RU: tuple[str, ...] = (
     "понедельник",
@@ -20,13 +21,17 @@ WEEKDAYS_RU: tuple[str, ...] = (
 )
 
 
-def get_selected_book_title() -> str:
-    """Placeholder until the previous vote winner is stored."""
-    return STUB_SELECTED_BOOK_TITLE
+def meeting_poll_title(book: Book) -> str:
+    return book.title.strip() or "книга месяца"
 
 
 def meeting_poll_question(title: str) -> str:
-    return f"Когда встречаемся по «{title}»?"
+    prefix = "Когда встречаемся по «"
+    suffix = "»?"
+    budget = POLL_QUESTION_LIMIT - len(prefix) - len(suffix)
+    if len(title) > budget:
+        title = f"{title[: max(budget - 1, 1)]}…"
+    return f"{prefix}{title}{suffix}"
 
 
 def meeting_poll_intro(title: str) -> str:
