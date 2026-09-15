@@ -68,7 +68,7 @@
 /create_meeting
 ```
 
-Бот спросит дату (`25.09` или `25.09.2026`), потом время начала (`19:00`). В группу уйдёт файл `.ics` на **1,5 часа** с заголовком «книжный клуб …» и кнопка **Добавить в Google Calendar**. Часовой пояс — Малага. Отмена: `/cancel`. Название берётся из выбранной книги месяца.
+Бот спросит дату (`25.09` или `25.09.2026`), потом время начала (`19:00`). В группу уйдёт файл `.ics` на **1,5 часа** с заголовком «книжный клуб …» и кнопки **Google Calendar** и **Календарь iPhone**. Часовой пояс — Малага. Отмена: `/cancel`. Название берётся из выбранной книги месяца.
 
 ---
 
@@ -137,9 +137,10 @@ DEBUG=true
 
 ```bash
 sudo systemctl enable --now docker
-docker-compose up -d --build
-docker-compose ps
-docker-compose logs -f bot
+sudo apt-get update && sudo apt-get install -y docker-compose-plugin
+docker compose up -d --build
+docker compose ps
+docker compose logs -f bot
 ```
 
 Поднимаются Postgres, Redis и бот. После ребута сервера контейнеры встанут сами (`restart: unless-stopped`).

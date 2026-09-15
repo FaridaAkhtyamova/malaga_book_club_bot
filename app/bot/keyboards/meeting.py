@@ -2,7 +2,9 @@ from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
-def google_calendar_keyboard(url: str) -> InlineKeyboardMarkup:
+def calendar_keyboard(google_url: str, apple_url: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="Добавить в Google Calendar", url=url)
+    builder.button(text="Google Calendar", url=google_url)
+    builder.button(text="Календарь iPhone", url=apple_url)
+    builder.adjust(1)
     return builder.as_markup()

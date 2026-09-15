@@ -4,8 +4,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.commands import format_help
 from app.bot.handlers.books import begin_suggest
 from app.bot.keyboards.suggest import SUGGEST_START_PAYLOAD
+from app.core.config import get_settings
 from app.repositories.user_repo import UserRepository
 
 router = Router()
@@ -45,5 +47,13 @@ async def cmd_start(
         "где 500 — количество страниц.\n\n"
         "Здесь, в личке — используйте /suggest. Я помогу найти книгу в каталоге "
         "или добавить её вручную.\n\n"
-        "Все предложенные книги попадут в общее голосование."
+        "Все предложенные книги попадут в общее голосование.\n\n"
+        "Список команд: /help"
     )
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    user = message.from_user
+    is_admin = user is not None and user.id in get_settings().admin_ids
+    await message.answer(format_help(is_admin=is_admin))

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
@@ -56,6 +56,7 @@ class MeetingInvite:
     end: datetime
     ics_bytes: bytes
     google_url: str
+    apple_url: str
     caption: str
     filename: str = ICS_FILENAME
 
@@ -121,6 +122,7 @@ def build_meeting_invite(start: datetime, *, book_title: str | None = None) -> M
         end=end,
         ics_bytes=_ics_bytes(title, start, end),
         google_url=_google_calendar_url(title, start, end),
+        apple_url=_apple_calendar_url(title, start, end),
         caption=_invite_caption(title, start, end),
     )
 
@@ -142,7 +144,8 @@ def _valid_date(day: int, month: int, year: int) -> date:
 
 
 def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    tz_name = get_settings().TIMEZONE
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     uid = f"{uuid.uuid4()}@malaga-book-club"
     lines = [
         "BEGIN:VCALENDAR",
@@ -150,12 +153,21 @@ def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
         "PRODID:-//Malaga Book Club Bot//EN",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
+        f"X-WR-TIMEZONE:{tz_name}",
+        *_vtimezone_lines(start),
         "BEGIN:VEVENT",
         f"UID:{uid}",
         f"DTSTAMP:{stamp}",
-        f"DTSTART:{_utc_stamp(start)}",
-        f"DTEND:{_utc_stamp(end)}",
+        f"DTSTART;TZID={tz_name}:{_local_stamp(start)}",
+        f"DTEND;TZID={tz_name}:{_local_stamp(end)}",
         f"SUMMARY:{_ics_escape(title)}",
+        "STATUS:CONFIRMED",
+        "TRANSP:OPAQUE",
+        "BEGIN:VALARM",
+        "ACTION:DISPLAY",
+        "DESCRIPTION:Напоминание",
+        "TRIGGER:-PT30M",
+        "END:VALARM",
         "END:VEVENT",
         "END:VCALENDAR",
         "",
@@ -175,22 +187,30 @@ def _google_calendar_url(title: str, start: datetime, end: datetime) -> str:
     return f"https://calendar.google.com/calendar/render?{params}"
 
 
+def _apple_calendar_url(title: str, start: datetime, end: datetime) -> str:
+    tz_name = get_settings().TIMEZONE
+    params = urlencode(
+        {
+            "service": "apple",
+            "start": _iso_local(start),
+            "end": _iso_local(end),
+            "title": title,
+            "timezone": tz_name,
+        }
+    )
+    return f"https://calndr.link/d/event/?{params}"
+
+
 def _invite_caption(title: str, start: datetime, end: datetime) -> str:
     local_start = start.astimezone(ZoneInfo(get_settings().TIMEZONE))
     local_end = end.astimezone(ZoneInfo(get_settings().TIMEZONE))
     month = MONTH_GENITIVE_RU[local_start.month]
-    when = (
-        f"{local_start.day} {month} {local_start.year}, "
-        f"{local_start:%H:%M}–{local_end:%H:%M}"
-    )
+    when = f"{local_start.day} {month} {local_start.year}, {local_start:%H:%M}–{local_end:%H:%M}"
     return (
         f"{title}\n{when} (Малага)\n\n"
-        "Файл ниже можно открыть в календаре телефона."
+        "Google Calendar или календарь iPhone — кнопки ниже. "
+        "Файл .ics тоже можно открыть на телефоне."
     )
-
-
-def _utc_stamp(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _local_stamp(moment: datetime) -> str:
@@ -198,10 +218,35 @@ def _local_stamp(moment: datetime) -> str:
     return moment.astimezone(tz).strftime("%Y%m%dT%H%M%S")
 
 
+def _iso_local(moment: datetime) -> str:
+    tz = ZoneInfo(get_settings().TIMEZONE)
+    return moment.astimezone(tz).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _vtimezone_lines(moment: datetime) -> list[str]:
+    tz_name = get_settings().TIMEZONE
+    local = moment.astimezone(ZoneInfo(tz_name))
+    offset = local.utcoffset()
+    if offset is None:
+        offset = timedelta(0)
+    total = int(offset.total_seconds())
+    sign = "+" if total >= 0 else "-"
+    hours, remainder = divmod(abs(total), 3600)
+    minutes = remainder // 60
+    stamp = f"{sign}{hours:02d}{minutes:02d}"
+    tz_abbr = local.tzname() or stamp
+    return [
+        "BEGIN:VTIMEZONE",
+        f"TZID:{tz_name}",
+        "BEGIN:STANDARD",
+        f"TZOFFSETFROM:{stamp}",
+        f"TZOFFSETTO:{stamp}",
+        f"TZNAME:{tz_abbr}",
+        "DTSTART:19700101T000000",
+        "END:STANDARD",
+        "END:VTIMEZONE",
+    ]
+
+
 def _ics_escape(text: str) -> str:
-    return (
-        text.replace("\\", "\\\\")
-        .replace(";", r"\;")
-        .replace(",", r"\,")
-        .replace("\n", r"\n")
-    )
+    return text.replace("\\", "\\\\").replace(";", r"\;").replace(",", r"\,").replace("\n", r"\n")

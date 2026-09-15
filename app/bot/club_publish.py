@@ -2,7 +2,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputPollOption, Message
 
-from app.bot.keyboards.meeting import google_calendar_keyboard
+from app.bot.keyboards.meeting import calendar_keyboard
 from app.bot.keyboards.suggest import suggest_dm_keyboard
 from app.db.models import Book, SuggestionCycle, VotePoll
 from app.services.club_destination import ClubDestination
@@ -116,7 +116,7 @@ async def publish_meeting_invite(bot: Bot, dest: ClubDestination, invite: Meetin
         chat_id=dest.chat_id,
         document=document,
         caption=invite.caption,
-        reply_markup=google_calendar_keyboard(invite.google_url),
+        reply_markup=calendar_keyboard(invite.google_url, invite.apple_url),
         message_thread_id=dest.message_thread_id,
     )
 

@@ -4,6 +4,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from app.bot.commands import setup_bot_commands
 from app.bot.handlers.admin import router as admin_router
 from app.bot.handlers.base import router as base_router
 from app.bot.handlers.books import router as books_router
@@ -25,6 +26,7 @@ async def main() -> None:
     bot = Bot(token=settings.BOT_TOKEN)
     if settings.DEBUG:
         logging.warning("DEBUG mode is on: /open_suggestions can reset the current month")
+    await setup_bot_commands(bot)
     dp = Dispatcher(storage=MemoryStorage())
 
     db_middleware = DbSessionMiddleware()
