@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -19,6 +19,9 @@ class User(Base):
 
     votes: Mapped[list["Vote"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     rsvps: Mapped[list["RSVP"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    suggestions: Mapped[list["Suggestion"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Book(Base):
@@ -30,9 +33,11 @@ class Book(Base):
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     google_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="book")
     votes: Mapped[list["Vote"]] = relationship(back_populates="book", cascade="all, delete-orphan")
+    suggestions: Mapped[list["Suggestion"]] = relationship(back_populates="book")
 
 
 class Meeting(Base):
@@ -46,8 +51,12 @@ class Meeting(Base):
     status: Mapped[str] = mapped_column(String(50), default="PLANNED", nullable=False)
 
     book: Mapped[Book | None] = relationship(back_populates="meetings")
-    votes: Mapped[list["Vote"]] = relationship(back_populates="meeting", cascade="all, delete-orphan")
-    rsvps: Mapped[list["RSVP"]] = relationship(back_populates="meeting", cascade="all, delete-orphan")
+    votes: Mapped[list["Vote"]] = relationship(
+        back_populates="meeting", cascade="all, delete-orphan"
+    )
+    rsvps: Mapped[list["RSVP"]] = relationship(
+        back_populates="meeting", cascade="all, delete-orphan"
+    )
 
 
 class Vote(Base):
@@ -73,3 +82,50 @@ class RSVP(Base):
 
     meeting: Mapped[Meeting] = relationship(back_populates="rsvps")
     user: Mapped[User] = relationship(back_populates="rsvps")
+
+
+class ClubSettings(Base):
+    __tablename__ = "club_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    group_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    suggest_topic_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    suggest_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    vote_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    announce_hour: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+
+
+class SuggestionCycle(Base):
+    __tablename__ = "suggestion_cycles"
+    __table_args__ = (
+        UniqueConstraint("target_year", "target_month", name="uq_cycle_target_month"),
+    )
+
+    STATUS_SUGGESTING = "SUGGESTING"
+    STATUS_VOTING = "VOTING"
+    STATUS_CLOSED = "CLOSED"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    target_year: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_month: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default=STATUS_SUGGESTING, nullable=False)
+    opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    suggestions: Mapped[list["Suggestion"]] = relationship(
+        back_populates="cycle", cascade="all, delete-orphan"
+    )
+
+
+class Suggestion(Base):
+    __tablename__ = "suggestions"
+    __table_args__ = (UniqueConstraint("cycle_id", "book_id", name="uq_suggestion_cycle_book"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    cycle_id: Mapped[int] = mapped_column(ForeignKey("suggestion_cycles.id"), nullable=False)
+    book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    cycle: Mapped[SuggestionCycle] = relationship(back_populates="suggestions")
+    book: Mapped[Book] = relationship(back_populates="suggestions")
+    user: Mapped[User] = relationship(back_populates="suggestions")

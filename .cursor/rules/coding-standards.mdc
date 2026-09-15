@@ -1,0 +1,13 @@
+---
+description: Coding standards — SQLAlchemy 2.0, async-first, aiogram 3, clean layers
+globs: **/*.py
+alwaysApply: true
+---
+
+# Coding Standards
+
+- **SQLAlchemy 2.0 only:** `Mapped[...]`, `mapped_column(...)`, `select(...)`. Never `session.query()`.
+- **Async first:** `async`/`await` for DB and HTTP (`AsyncSession`, `httpx.AsyncClient`).
+- **Aiogram 3:** Routers, FSM (`StatesGroup`, `State`), `CallbackData` for inline buttons.
+- **Type safety:** Strict typing on functions, handlers, and repositories (`mypy`).
+- **Clean layers:** Handlers stay thin. Logic in Services, DB in Repositories.

@@ -5,14 +5,14 @@ from app.db.models import User
 
 
 class UserRepository:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
     async def get_or_create_user(
         self,
         telegram_id: int,
         username: str | None,
-        full_name: str,
+        full_name: str | None,
     ) -> User:
         result = await self.session.execute(select(User).where(User.id == telegram_id))
         user = result.scalar_one_or_none()

@@ -1,0 +1,40 @@
+---
+description: Project context, architecture, and current status for Malaga Book Club Telegram bot
+alwaysApply: true
+---
+
+# Malaga Book Club Bot
+
+Production-ready async Telegram bot (portfolio: Clean Architecture, async-first, strict typing).
+
+Full context: `CONTEXT.md`.
+
+## Stack
+
+- Python 3.12+, `mypy`, `ruff`
+- aiogram 3.x, PostgreSQL 16, SQLAlchemy 2.0 + `asyncpg`, Alembic (async)
+- Pydantic v2, `pydantic-settings`, `httpx`, APScheduler
+- Docker Compose: Postgres `5432`, Redis `6379` (`book_club_db`, `book_club_redis`)
+
+## Layers
+
+Handlers → Services → Repositories → Models
+
+- `app/bot/handlers/` — routers, FSM, commands (`base`, `books`/`suggest`, `club_setup`, `cycle_open`, `admin`)
+- `app/bot/middlewares/` — e.g. `DbSessionMiddleware` injects `AsyncSession`
+- `app/bot/keyboards/` — inline keyboards for Google Books results and DM deep link
+- `app/services/` — `GoogleBooksService`, `CycleService`, `DestinationService`, scheduler
+- `app/repositories/` — async CRUD
+- `app/db/models.py` — `User`, `Book`, `ClubSettings`, `SuggestionCycle`, `Suggestion` (+ unused `Meeting`/`Vote`/`RSVP`)
+- `app/schemas/` — Pydantic DTOs
+- `main.py` — polling + APScheduler
+
+## Status
+
+- Docker and Alembic migrations (`Initial tables`, `suggestion_cycles`, `suggest_topic_id`)
+- `/start` registers/fetches the user; `/start suggest` opens DM suggestions
+- Cycle: scheduled/manual open for **next** month → `/suggest` in group topic or DM → Google Books card → non-anonymous polls (chunks of 10)
+
+## Next feature
+
+Optional: announce poll winner, meetings/RSVP around the chosen book.

@@ -7,3 +7,4 @@ class BookSchema(BaseModel):
     description: str | None = None
     cover_url: str | None = None
     google_id: str = Field(..., min_length=1)
+    page_count: int | None = None
