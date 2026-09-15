@@ -10,6 +10,7 @@ from app.bot.handlers.books import router as books_router
 from app.bot.handlers.club_setup import router as club_setup_router
 from app.bot.handlers.cycle_open import router as cycle_open_router
 from app.bot.handlers.group_suggest import router as group_suggest_router
+from app.bot.handlers.meeting import router as meeting_router
 from app.bot.middlewares.db import DbSessionMiddleware
 from app.core.config import get_settings
 from app.services.club_scheduler import create_scheduler
@@ -31,6 +32,7 @@ async def main() -> None:
     dp.callback_query.middleware(db_middleware)
     dp.include_router(cycle_open_router)
     dp.include_router(club_setup_router)
+    dp.include_router(meeting_router)
     dp.include_router(admin_router)
     dp.include_router(group_suggest_router)
     dp.include_router(base_router)

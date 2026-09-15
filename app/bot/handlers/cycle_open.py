@@ -8,7 +8,7 @@ from app.bot.club_publish import publish_club_announcement
 from app.core.config import get_settings
 from app.services.club_destination import DestinationService, suggestion_announcement_text
 from app.services.cycle_open import CycleOpenService
-from app.services.cycle_service import GroupNotSetError, month_name_ru
+from app.services.cycle_service import CycleAlreadyOpenError, GroupNotSetError, month_name_ru
 
 router = Router()
 
@@ -24,9 +24,12 @@ async def cmd_open_suggestions(
         return
 
     try:
-        cycle, _, _ = await CycleOpenService(session).open_or_reopen()
+        cycle, _, should_announce = await CycleOpenService(session).open_or_reopen()
         dest = await DestinationService(session).get_destination()
     except GroupNotSetError as exc:
+        await message.answer(str(exc))
+        return
+    except CycleAlreadyOpenError as exc:
         await message.answer(str(exc))
         return
 
@@ -35,6 +38,10 @@ async def cmd_open_suggestions(
         return
 
     month = month_name_ru(cycle.target_month)
+    if not should_announce:
+        await message.answer(f"Сбор предложений на {month} уже открыт.")
+        return
+
     try:
         await publish_club_announcement(
             bot,

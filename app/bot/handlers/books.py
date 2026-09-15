@@ -378,11 +378,13 @@ async def on_confirm_send(
         return
 
     await callback.answer()
-    await _publish_to_group(bot, callback.message, session, book, user)
-    await callback.message.answer(
-        "Карточка отправлена в общий чат.",
-        reply_markup=ReplyKeyboardRemove(),
+    published = await _publish_to_group(bot, session, book, user)
+    text = (
+        "Карточка отправлена в общий чат."
+        if published
+        else "Книга сохранена, но карточку в группу отправить не удалось."
     )
+    await callback.message.answer(text, reply_markup=ReplyKeyboardRemove())
 
 
 @router.callback_query(BookNavCallback.filter())
@@ -612,15 +614,13 @@ async def _save_pending(
 
 async def _publish_to_group(
     bot: Bot,
-    source: Message,
     session: AsyncSession,
     book: Book,
     user: User,
-) -> None:
+) -> bool:
     dest = await DestinationService(session).get_destination()
     if dest is None:
-        await source.answer("Группа клуба ещё не привязана.")
-        return
+        return False
     try:
         await send_html_card(
             bot,
@@ -630,7 +630,8 @@ async def _publish_to_group(
             dest.message_thread_id,
         )
     except TelegramBadRequest:
-        await source.answer("Не удалось опубликовать карточку в группе клуба.")
+        return False
+    return True
 
 
 async def _send_book_card(message: Message, cover_url: str | None, caption: str) -> None:

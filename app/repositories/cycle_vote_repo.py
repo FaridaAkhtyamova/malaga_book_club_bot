@@ -1,0 +1,44 @@
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from app.db.models import SuggestionCycle
+
+
+class CycleVoteRepository:
+    """Queries for voting status and the chosen book of a cycle."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get_latest_voting(self) -> SuggestionCycle | None:
+        result = await self.session.execute(
+            select(SuggestionCycle)
+            .where(SuggestionCycle.status == SuggestionCycle.STATUS_VOTING)
+            .order_by(SuggestionCycle.opened_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_latest_with_winner(self) -> SuggestionCycle | None:
+        result = await self.session.execute(
+            select(SuggestionCycle)
+            .where(SuggestionCycle.winner_book_id.is_not(None))
+            .options(selectinload(SuggestionCycle.winner))
+            .order_by(SuggestionCycle.opened_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def set_winner(self, cycle: SuggestionCycle, book_id: int) -> SuggestionCycle:
+        cycle.winner_book_id = book_id
+        cycle.status = SuggestionCycle.STATUS_CLOSED
+        await self.session.commit()
+        await self.session.refresh(cycle)
+        return cycle
+
+    async def clear_winner(self, cycle: SuggestionCycle) -> SuggestionCycle:
+        cycle.winner_book_id = None
+        await self.session.commit()
+        await self.session.refresh(cycle)
+        return cycle

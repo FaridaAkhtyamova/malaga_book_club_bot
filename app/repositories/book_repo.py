@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -10,6 +11,13 @@ from app.schemas.book import BookSchema
 class BookRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
+
+    async def get_by_ids(self, ids: Sequence[int]) -> list[Book]:
+        if not ids:
+            return []
+        result = await self.session.execute(select(Book).where(Book.id.in_(list(ids))))
+        by_id = {book.id: book for book in result.scalars().all()}
+        return [by_id[book_id] for book_id in ids if book_id in by_id]
 
     async def get_by_google_id(self, google_id: str) -> Book | None:
         result = await self.session.execute(select(Book).where(Book.google_id == google_id))

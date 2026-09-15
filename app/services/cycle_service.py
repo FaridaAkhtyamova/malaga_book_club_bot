@@ -10,11 +10,13 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.db.models import Book, ClubSettings, SuggestionCycle, User
+from app.db.models import Book, ClubSettings, SuggestionCycle, User, VotePoll
 from app.repositories.book_repo import BookRepository
 from app.repositories.cycle_repo import CycleRepository
+from app.repositories.cycle_vote_repo import CycleVoteRepository
 from app.repositories.settings_repo import SettingsRepository
 from app.repositories.suggestion_repo import SuggestionRepository
+from app.repositories.vote_poll_repo import VotePollRepository
 from app.schemas.book import BookSchema
 
 MONTH_NAMES_RU: dict[int, str] = {
@@ -63,6 +65,18 @@ class NotEnoughBooksError(CycleServiceError):
     """Fewer than two books — Telegram poll cannot be created."""
 
 
+class CycleNotVotingError(CycleServiceError):
+    """There is no cycle in VOTING status."""
+
+
+class NoOpenPollsError(CycleServiceError):
+    """Voting is open but no Telegram polls are recorded as open."""
+
+
+class NoWinnerError(CycleServiceError):
+    """The latest vote has not produced a winning book yet."""
+
+
 @dataclass(frozen=True, slots=True)
 class ScheduledAnnounce:
     text: str
@@ -74,13 +88,23 @@ class ScheduledVote:
     chunks: list[list[Book]]
 
 
+@dataclass(frozen=True, slots=True)
+class PublishedVotePoll:
+    chat_id: int
+    message_id: int
+    telegram_poll_id: str | None
+    book_ids: list[int]
+
+
 class CycleService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
         self.settings_repo = SettingsRepository(session)
         self.cycle_repo = CycleRepository(session)
+        self.cycle_vote_repo = CycleVoteRepository(session)
         self.suggestion_repo = SuggestionRepository(session)
         self.book_repo = BookRepository(session)
+        self.vote_poll_repo = VotePollRepository(session)
 
     async def get_settings(self) -> ClubSettings:
         return await self.settings_repo.get_or_create()
@@ -163,8 +187,58 @@ class CycleService:
         chunks = chunk_books_for_polls(books)
         if not chunks:
             raise NotEnoughBooksError("Для опроса нужно минимум две предложенные книги.")
-        cycle = await self.cycle_repo.set_status(cycle, SuggestionCycle.STATUS_VOTING)
         return cycle, chunks
+
+    async def mark_voting(self, cycle: SuggestionCycle) -> SuggestionCycle:
+        return await self.cycle_repo.set_status(cycle, SuggestionCycle.STATUS_VOTING)
+
+    async def record_vote_polls(
+        self,
+        cycle: SuggestionCycle,
+        polls: Sequence[PublishedVotePoll],
+    ) -> None:
+        for poll in polls:
+            await self.vote_poll_repo.add(
+                cycle_id=cycle.id,
+                chat_id=poll.chat_id,
+                message_id=poll.message_id,
+                telegram_poll_id=poll.telegram_poll_id,
+                option_book_ids=poll.book_ids,
+            )
+
+    async def get_latest_voting(self) -> SuggestionCycle | None:
+        return await self.cycle_vote_repo.get_latest_voting()
+
+    async def require_open_vote_polls(self, cycle: SuggestionCycle) -> list[VotePoll]:
+        if cycle.status != SuggestionCycle.STATUS_VOTING:
+            raise CycleNotVotingError("Сейчас нет активного голосования за книгу.")
+        polls = await self.vote_poll_repo.list_open(cycle.id)
+        if not polls:
+            raise NoOpenPollsError("Нет открытых опросов. Сначала запустите /start_vote.")
+        return polls
+
+    async def mark_poll_closed(self, poll: VotePoll) -> None:
+        await self.vote_poll_repo.mark_closed(poll)
+
+    async def apply_winner(self, cycle: SuggestionCycle, book: Book) -> SuggestionCycle:
+        return await self.cycle_vote_repo.set_winner(cycle, book.id)
+
+    async def reopen_suggestions_after_empty_vote(
+        self,
+        cycle: SuggestionCycle,
+    ) -> SuggestionCycle:
+        return await self.cycle_repo.set_status(cycle, SuggestionCycle.STATUS_SUGGESTING)
+
+    async def get_selected_book(self) -> Book:
+        cycle = await self.cycle_vote_repo.get_latest_with_winner()
+        if cycle is None or cycle.winner is None:
+            raise NoWinnerError(
+                "Сначала закройте голосование за книгу командой /close_vote."
+            )
+        return cycle.winner
+
+    async def books_by_ids(self, ids: Sequence[int]) -> list[Book]:
+        return await self.book_repo.get_by_ids(ids)
 
     async def run_scheduled(self, now: datetime) -> ScheduledAnnounce | ScheduledVote | None:
         settings = await self.settings_repo.get_or_create()

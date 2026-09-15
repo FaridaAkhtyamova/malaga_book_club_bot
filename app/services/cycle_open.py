@@ -8,7 +8,9 @@ from app.core.config import get_settings
 from app.db.models import Suggestion, SuggestionCycle
 from app.repositories.cycle_repo import CycleRepository
 from app.repositories.settings_repo import SettingsRepository
+from app.repositories.vote_poll_repo import VotePollRepository
 from app.services.cycle_service import (
+    CycleAlreadyOpenError,
     GroupNotSetError,
     announcement_text,
     next_year_month,
@@ -37,11 +39,16 @@ class CycleOpenService:
         existing = await self.cycle_repo.get_by_month(year, month)
         if existing is None:
             cycle = await self.cycle_repo.create(year, month)
-            return cycle, announcement_text(month), False
+            return cycle, announcement_text(month), True
 
         if existing.status == SuggestionCycle.STATUS_SUGGESTING:
             return existing, announcement_text(month), False
 
+        if not get_settings().DEBUG:
+            raise CycleAlreadyOpenError("Сбор предложений на этот месяц уже был открыт.")
+
+        await VotePollRepository(self.session).delete_for_cycle(existing.id)
+        existing.winner_book_id = None
         await self.session.execute(delete(Suggestion).where(Suggestion.cycle_id == existing.id))
         await self.session.commit()
         cycle = await self.cycle_repo.set_status(existing, SuggestionCycle.STATUS_SUGGESTING)

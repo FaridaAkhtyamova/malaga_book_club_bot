@@ -1,5 +1,6 @@
 from aiogram import Bot, Router
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -120,7 +121,13 @@ async def cmd_start_vote(
         await message.answer(str(exc))
         return
 
-    await publish_vote_polls(bot, settings.group_chat_id, cycle, chunks)
+    try:
+        await publish_vote_polls(bot, settings.group_chat_id, cycle, chunks)
+    except TelegramAPIError as exc:
+        await message.answer(f"Не удалось опубликовать опросы: {exc}")
+        return
+
+    await service.mark_voting(cycle)
     if message.chat.id != settings.group_chat_id:
         await message.answer("Опросы опубликованы в группе.")
 

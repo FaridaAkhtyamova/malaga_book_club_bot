@@ -53,7 +53,9 @@ async def run_scheduled_jobs(bot: Bot) -> None:
                 text = _announcement_from_scheduled(action.text)
                 await publish_club_announcement(bot, dest, text)
             elif isinstance(action, ScheduledVote):
-                await publish_vote_polls(bot, dest, action.cycle, action.chunks)
+                published = await publish_vote_polls(bot, dest, action.cycle, action.chunks)
+                await service.record_vote_polls(action.cycle, published)
+                await service.mark_voting(action.cycle)
         except Exception:
             logger.exception("Failed to publish scheduled club message")
 
