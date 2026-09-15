@@ -21,6 +21,7 @@ from app.services.cycle_service import (
     NoOpenPollsError,
     NoWinnerError,
     NotEnoughBooksError,
+    VotePollsAlreadyOpenError,
     chunk_books_for_polls,
     month_name_ru,
 )
@@ -99,6 +100,9 @@ async def cmd_start_vote(
     try:
         cycle, chunks = await service.prepare_vote()
     except CycleNotOpenError as exc:
+        await message.answer(str(exc))
+        return
+    except VotePollsAlreadyOpenError as exc:
         await message.answer(str(exc))
         return
     except NotEnoughBooksError as exc:

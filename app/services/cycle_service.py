@@ -73,6 +73,10 @@ class NoOpenPollsError(CycleServiceError):
     """Voting is open but no Telegram polls are recorded as open."""
 
 
+class VotePollsAlreadyOpenError(CycleServiceError):
+    """This cycle already has live Telegram polls."""
+
+
 class NoWinnerError(CycleServiceError):
     """The latest vote has not produced a winning book yet."""
 
@@ -181,7 +185,14 @@ class CycleService:
     async def prepare_vote(self) -> tuple[SuggestionCycle, list[list[Book]]]:
         cycle = await self.cycle_repo.get_latest_suggesting()
         if cycle is None:
-            raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
+            cycle = await self.cycle_vote_repo.get_latest_voting()
+            if cycle is None:
+                raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
+            open_polls = await self.vote_poll_repo.list_open(cycle.id)
+            if open_polls:
+                raise VotePollsAlreadyOpenError(
+                    "Опросы уже идут. Когда время вышло, закройте их командой /close_vote."
+                )
 
         books = await self.suggestion_repo.list_books(cycle.id)
         chunks = chunk_books_for_polls(books)
@@ -214,7 +225,10 @@ class CycleService:
             raise CycleNotVotingError("Сейчас нет активного голосования за книгу.")
         polls = await self.vote_poll_repo.list_open(cycle.id)
         if not polls:
-            raise NoOpenPollsError("Нет открытых опросов. Сначала запустите /start_vote.")
+            raise NoOpenPollsError(
+                "Нет опросов, которые бот может закрыть. "
+                "Запустите /start_vote ещё раз — старые опросы в чате не считаются."
+            )
         return polls
 
     async def mark_poll_closed(self, poll: VotePoll) -> None:

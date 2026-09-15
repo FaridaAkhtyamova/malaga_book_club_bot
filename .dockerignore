@@ -1,0 +1,10 @@
+.venv/
+.git/
+.cursor/
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+.env
+*.md
+ssh-key*.key

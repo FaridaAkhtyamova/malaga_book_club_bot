@@ -128,3 +128,20 @@ DEBUG=true
 Тогда `/open_suggestions` после `/start_vote` снова открывает сбор и сбрасывает список книг — можно гонять цикл туда-сюда без смены месяца.
 
 На проде поставьте `DEBUG=false` или уберите строку. Код менять не нужно.
+
+---
+
+## Запуск в облаке (Docker)
+
+На сервере в каталоге репозитория должен лежать `.env` (как в `.env.example`). `DB_HOST=localhost` в файле нормально: контейнер бота сам ходит в Postgres по имени сервиса `postgres`.
+
+```bash
+sudo systemctl enable --now docker
+docker-compose up -d --build
+docker-compose ps
+docker-compose logs -f bot
+```
+
+Поднимаются Postgres, Redis и бот. После ребута сервера контейнеры встанут сами (`restart: unless-stopped`).
+
+Локальный `python main.py` остановите: два процесса с одним токеном конфликтуют в Telegram.
