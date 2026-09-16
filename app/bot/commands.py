@@ -38,7 +38,7 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "cancel",
         "Отменить текущий ввод",
-        "/cancel — отменить поиск или создание встречи",
+        "/cancel — отменить поиск, опрос дат или создание встречи",
     ),
     CommandInfo(
         "set_group",
@@ -87,7 +87,7 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "start_meeting_poll",
         "Опрос дат встречи",
-        "/start_meeting_poll — опрос дат встречи (не зависит от голосования за книгу)",
+        "/start_meeting_poll — опрос дат встречи (если книги нет — сначала спросит название)",
         admin=True,
     ),
     CommandInfo(

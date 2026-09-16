@@ -255,6 +255,16 @@ class CycleService:
     async def apply_winner(self, cycle: SuggestionCycle, book: Book) -> SuggestionCycle:
         return await self.cycle_vote_repo.set_winner(cycle, book.id)
 
+    async def apply_manual_meeting_book(self, cycle: SuggestionCycle, title: str) -> Book:
+        book = await self.book_repo.create_manual(
+            title=title,
+            authors=None,
+            description=None,
+            page_count=None,
+        )
+        await self.apply_winner(cycle, book)
+        return book
+
     async def reopen_suggestions_after_empty_vote(
         self,
         cycle: SuggestionCycle,
