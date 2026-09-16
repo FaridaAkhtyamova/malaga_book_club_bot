@@ -4,7 +4,6 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
@@ -54,8 +53,6 @@ class MeetingInvite:
     start: datetime
     end: datetime
     ics_bytes: bytes
-    google_url: str
-    apple_url: str
     caption: str
     filename: str = ICS_FILENAME
 
@@ -119,8 +116,6 @@ def build_meeting_invite(start: datetime, *, book_title: str) -> MeetingInvite:
         start=start,
         end=end,
         ics_bytes=_ics_bytes(title, start, end),
-        google_url=_google_calendar_url(title, start, end),
-        apple_url=_apple_calendar_url(title, start, end),
         caption=_invite_caption(title, start, end),
     )
 
@@ -173,32 +168,6 @@ def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
     return "\r\n".join(lines).encode("utf-8")
 
 
-def _google_calendar_url(title: str, start: datetime, end: datetime) -> str:
-    params = urlencode(
-        {
-            "action": "TEMPLATE",
-            "text": title,
-            "dates": f"{_local_stamp(start)}/{_local_stamp(end)}",
-            "ctz": get_settings().TIMEZONE,
-        }
-    )
-    return f"https://calendar.google.com/calendar/render?{params}"
-
-
-def _apple_calendar_url(title: str, start: datetime, end: datetime) -> str:
-    tz_name = get_settings().TIMEZONE
-    params = urlencode(
-        {
-            "service": "apple",
-            "start": _iso_local(start),
-            "end": _iso_local(end),
-            "title": title,
-            "timezone": tz_name,
-        }
-    )
-    return f"https://calndr.link/d/event/?{params}"
-
-
 def _invite_caption(title: str, start: datetime, end: datetime) -> str:
     local_start = start.astimezone(ZoneInfo(get_settings().TIMEZONE))
     local_end = end.astimezone(ZoneInfo(get_settings().TIMEZONE))
@@ -206,19 +175,13 @@ def _invite_caption(title: str, start: datetime, end: datetime) -> str:
     when = f"{local_start.day} {month} {local_start.year}, {local_start:%H:%M}–{local_end:%H:%M}"
     return (
         f"{title}\n{when} (Малага)\n\n"
-        "Google Calendar или календарь iPhone — кнопки ниже. "
-        "Файл .ics тоже можно открыть на телефоне."
+        "Откройте файл .ics, чтобы добавить встречу в календарь."
     )
 
 
 def _local_stamp(moment: datetime) -> str:
     tz = ZoneInfo(get_settings().TIMEZONE)
     return moment.astimezone(tz).strftime("%Y%m%dT%H%M%S")
-
-
-def _iso_local(moment: datetime) -> str:
-    tz = ZoneInfo(get_settings().TIMEZONE)
-    return moment.astimezone(tz).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _vtimezone_lines(moment: datetime) -> list[str]:

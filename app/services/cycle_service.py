@@ -265,6 +265,12 @@ class CycleService:
     ) -> SuggestionCycle:
         return await self.cycle_repo.set_status(cycle, SuggestionCycle.STATUS_SUGGESTING)
 
+    async def book_for_cycle(self, cycle: SuggestionCycle) -> Book | None:
+        if cycle.winner_book_id is None:
+            return None
+        books = await self.book_repo.get_by_ids([cycle.winner_book_id])
+        return books[0] if books else None
+
     async def get_selected_cycle(self) -> SuggestionCycle:
         cycle = await self.cycle_vote_repo.get_latest_with_winner()
         if cycle is None or cycle.winner is None:
@@ -297,7 +303,9 @@ class CycleService:
         return book, meeting_day
 
     async def prepare_meeting_poll(self) -> SuggestionCycle:
-        cycle = await self.get_selected_cycle()
+        cycle = await self.get_latest_cycle()
+        if cycle is None:
+            raise CycleNotOpenError("Сначала откройте сбор командой /open_suggestions.")
         open_polls = await self.meeting_poll_repo.list_open(cycle.id)
         if open_polls:
             raise MeetingPollsAlreadyOpenError(
@@ -305,6 +313,12 @@ class CycleService:
             )
         if cycle.winner_meeting_date is not None:
             await self.cycle_vote_repo.clear_meeting_date(cycle)
+        return cycle
+
+    async def get_meeting_poll_cycle(self) -> SuggestionCycle:
+        cycle = await self.get_latest_cycle()
+        if cycle is None:
+            raise CycleNotOpenError("Сначала откройте сбор командой /open_suggestions.")
         return cycle
 
     async def record_meeting_poll(self, cycle: SuggestionCycle, poll: PublishedMeetingPoll) -> None:

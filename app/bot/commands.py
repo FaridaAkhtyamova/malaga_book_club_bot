@@ -87,7 +87,7 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "start_meeting_poll",
         "Опрос дат встречи",
-        "/start_meeting_poll — опрос дат встречи по выбранной книге",
+        "/start_meeting_poll — опрос дат встречи (не зависит от голосования за книгу)",
         admin=True,
     ),
     CommandInfo(

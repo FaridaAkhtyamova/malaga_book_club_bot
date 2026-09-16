@@ -10,6 +10,7 @@ from aiogram.types import PollOption
 
 from app.core.config import get_settings
 from app.db.models import Book, SuggestionCycle
+from app.services.cycle_service import MONTH_NAMES_RU
 from app.services.meeting_invite import (
     MONTH_GENITIVE_RU,
     InvalidMeetingDateError,
@@ -62,6 +63,12 @@ class DateVoteCounts:
 
 def meeting_poll_title(book: Book) -> str:
     return book.title.strip() or "книга месяца"
+
+
+def meeting_subject(cycle: SuggestionCycle, book: Book | None = None) -> str:
+    if book is not None:
+        return meeting_poll_title(book)
+    return f"книга на {MONTH_NAMES_RU[cycle.target_month]}"
 
 
 def meeting_poll_question(title: str) -> str:
@@ -206,9 +213,14 @@ def format_meeting_day(day: date) -> str:
     return f"{day.day} {MONTH_GENITIVE_RU[day.month]} ({weekday})"
 
 
-def meeting_date_announcement(cycle: SuggestionCycle, book: Book, day: date) -> str:
+def meeting_date_announcement(
+    cycle: SuggestionCycle,
+    book: Book | None,
+    day: date,
+) -> str:
+    title = meeting_poll_title(book) if book is not None else meeting_subject(cycle)
     return (
-        f"Встреча по «{meeting_poll_title(book)}»: {format_meeting_day(day)}.\n"
+        f"Встреча по «{title}»: {format_meeting_day(day)}.\n"
         "Дальше /create_meeting — укажите время."
     )
 

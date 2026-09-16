@@ -13,7 +13,7 @@ from app.bot.club_publish import (
     stop_vote_polls,
 )
 from app.bot.filters.admin_filter import AdminFilter
-from app.db.models import Book, SuggestionCycle
+from app.db.models import SuggestionCycle
 from app.services.club_destination import ClubDestination, DestinationService
 from app.services.cycle_service import (
     CycleNotOpenError,
@@ -24,7 +24,6 @@ from app.services.cycle_service import (
     NoOpenMeetingPollsError,
     NoOpenPollsError,
     NotEnoughBooksError,
-    NoWinnerError,
     VotePollsAlreadyOpenError,
     chunk_books_for_polls,
     month_name_ru,
@@ -34,8 +33,8 @@ from app.services.meeting_poll import (
     format_meeting_day,
     meeting_date_announcement,
     meeting_poll_options,
-    meeting_poll_title,
     meeting_runoff_options,
+    meeting_subject,
     merge_date_counts,
     tally_meeting_dates,
 )
@@ -190,7 +189,9 @@ async def cmd_close_vote(
             await message.answer(f"Книга выбрана, но анонс не отправился: {exc}")
             return
         try:
-            ok = await _publish_and_record_meeting_poll(bot, dest, service, cycle, winner)
+            ok = await _publish_and_record_meeting_poll(
+                bot, dest, service, cycle, meeting_subject(cycle, winner)
+            )
         except TelegramAPIError as exc:
             await message.answer(
                 f"Книга выбрана, но опрос дат встречи не отправился: {exc}\n"
@@ -234,17 +235,15 @@ async def cmd_start_meeting_poll(
     service = CycleService(session)
     try:
         cycle = await service.prepare_meeting_poll()
-    except (NoWinnerError, MeetingPollsAlreadyOpenError) as exc:
+    except (CycleNotOpenError, MeetingPollsAlreadyOpenError) as exc:
         await message.answer(str(exc))
         return
 
-    book = cycle.winner
-    if book is None:
-        await message.answer("Сначала закройте голосование за книгу командой /close_vote.")
-        return
-
+    book = await service.book_for_cycle(cycle)
     try:
-        ok = await _publish_and_record_meeting_poll(bot, dest, service, cycle, book)
+        ok = await _publish_and_record_meeting_poll(
+            bot, dest, service, cycle, meeting_subject(cycle, book)
+        )
     except TelegramAPIError as exc:
         await message.answer(f"Не удалось опубликовать опрос дат: {exc}")
         return
@@ -273,16 +272,13 @@ async def cmd_close_meeting_poll(
 
     service = CycleService(session)
     try:
-        cycle = await service.get_selected_cycle()
+        cycle = await service.get_meeting_poll_cycle()
         polls = await service.require_open_meeting_polls(cycle)
-    except (NoWinnerError, NoOpenMeetingPollsError) as exc:
+    except (CycleNotOpenError, NoOpenMeetingPollsError) as exc:
         await message.answer(str(exc))
         return
 
-    book = cycle.winner
-    if book is None:
-        await message.answer("Сначала закройте голосование за книгу командой /close_vote.")
-        return
+    book = await service.book_for_cycle(cycle)
 
     try:
         stopped = await stop_meeting_polls(bot, polls)
@@ -328,7 +324,7 @@ async def cmd_close_meeting_poll(
             published = await publish_meeting_poll(
                 bot,
                 dest,
-                meeting_poll_title(book),
+                meeting_subject(cycle, book),
                 meeting_runoff_options(chunk),
                 runoff=True,
                 send_intro=index == 0,
@@ -386,12 +382,12 @@ async def _publish_and_record_meeting_poll(
     dest: ClubDestination,
     service: CycleService,
     cycle: SuggestionCycle,
-    book: Book,
+    title: str,
 ) -> bool:
     published = await publish_meeting_poll(
         bot,
         dest,
-        meeting_poll_title(book),
+        title,
         meeting_poll_options(),
     )
     if published is None:
