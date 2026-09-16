@@ -10,7 +10,7 @@ from app.bot.club_publish import publish_meeting_invite
 from app.bot.filters.admin_filter import AdminFilter
 from app.bot.states.meeting import MeetingInviteStates
 from app.services.club_destination import DestinationService
-from app.services.cycle_service import CycleService, NoMeetingDateError, NoWinnerError
+from app.services.cycle_service import CycleService, NoMeetingDateError
 from app.services.meeting_invite import (
     InvalidMeetingTimeError,
     MeetingInPastError,
@@ -24,6 +24,7 @@ router = Router()
 
 _MEETING_STATES = StateFilter(MeetingInviteStates)
 _ASK_TIME = "Напишите время начала, например 19:00. Встреча продлится 1,5 часа по Малаге."
+_ASK_TITLE = "Книга ещё не выбрана. Напишите название для приглашения."
 _CANCELLED = "Создание встречи отменено."
 
 
@@ -33,6 +34,27 @@ def _ask_time(meeting_day: date, book_title: str) -> str:
         f"Дата: {format_meeting_day(meeting_day)}.\n"
         f"{_ASK_TIME}"
     )
+
+
+def _ask_title(meeting_day: date) -> str:
+    return f"Дата: {format_meeting_day(meeting_day)}.\n{_ASK_TITLE}"
+
+
+async def _prompt_meeting_step(
+    message: Message,
+    state: FSMContext,
+    *,
+    meeting_day: date,
+    book_title: str | None,
+) -> None:
+    await state.update_data(meeting_date=meeting_day.isoformat())
+    if book_title is None:
+        await state.set_state(MeetingInviteStates.waiting_title)
+        await message.answer(_ask_title(meeting_day))
+        return
+    await state.update_data(book_title=book_title)
+    await state.set_state(MeetingInviteStates.waiting_time)
+    await message.answer(_ask_time(meeting_day, book_title))
 
 
 @router.message(Command("create_meeting"), AdminFilter())
@@ -47,20 +69,44 @@ async def cmd_create_meeting(
         return
 
     try:
-        book, meeting_day = await CycleService(session).get_selected_meeting()
-    except (NoWinnerError, NoMeetingDateError) as exc:
+        book_title, meeting_day = await CycleService(session).get_selected_meeting()
+    except NoMeetingDateError as exc:
         await message.answer(str(exc))
         return
 
-    await state.update_data(book_title=book.title, meeting_date=meeting_day.isoformat())
-    await state.set_state(MeetingInviteStates.waiting_time)
-    await message.answer(_ask_time(meeting_day, book.title))
+    await _prompt_meeting_step(message, state, meeting_day=meeting_day, book_title=book_title)
 
 
 @router.message(Command("cancel"), _MEETING_STATES)
 async def cmd_cancel_meeting(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(_CANCELLED)
+
+
+@router.message(MeetingInviteStates.waiting_title, F.text, AdminFilter())
+async def on_meeting_title(
+    message: Message,
+    session: AsyncSession,
+    state: FSMContext,
+) -> None:
+    title = (message.text or "").strip()
+    if not title:
+        await message.answer(_ASK_TITLE)
+        return
+
+    data = await state.get_data()
+    raw_date = data.get("meeting_date")
+    if isinstance(raw_date, str):
+        meeting_day = date.fromisoformat(raw_date)
+    else:
+        try:
+            _, meeting_day = await CycleService(session).get_selected_meeting()
+        except NoMeetingDateError as exc:
+            await state.clear()
+            await message.answer(str(exc))
+            return
+
+    await _prompt_meeting_step(message, state, meeting_day=meeting_day, book_title=title)
 
 
 @router.message(MeetingInviteStates.waiting_time, F.text, AdminFilter())
@@ -81,16 +127,22 @@ async def on_meeting_time(
 
     data = await state.get_data()
     raw_date = data.get("meeting_date")
-    book_title = data.get("book_title")
-    if not isinstance(raw_date, str) or not isinstance(book_title, str):
+    stored_title = data.get("book_title")
+    book_title = stored_title.strip() if isinstance(stored_title, str) else ""
+    if not isinstance(raw_date, str) or not book_title:
         try:
-            book, meeting_day = await CycleService(session).get_selected_meeting()
-        except (NoWinnerError, NoMeetingDateError) as exc:
+            cycle_title, meeting_day = await CycleService(session).get_selected_meeting()
+        except NoMeetingDateError as exc:
             await state.clear()
             await message.answer(str(exc))
             return
-        book_title = book.title
         raw_date = meeting_day.isoformat()
+        book_title = book_title or (cycle_title or "")
+        if not book_title:
+            await _prompt_meeting_step(
+                message, state, meeting_day=meeting_day, book_title=None
+            )
+            return
         await state.update_data(book_title=book_title, meeting_date=raw_date)
 
     try:

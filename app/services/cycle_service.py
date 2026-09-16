@@ -288,19 +288,18 @@ class CycleService:
             )
         return book
 
-    async def get_selected_meeting(self) -> tuple[Book, date]:
-        cycle = await self.get_selected_cycle()
-        book = cycle.winner
-        meeting_day = cycle.winner_meeting_date
-        if book is None:
-            raise NoWinnerError(
-                "Сначала закройте голосование за книгу командой /close_vote."
-            )
-        if meeting_day is None:
+    async def get_selected_meeting(self) -> tuple[str | None, date]:
+        cycle = await self.get_latest_cycle()
+        meeting_day = None if cycle is None else cycle.winner_meeting_date
+        if cycle is None or meeting_day is None:
             raise NoMeetingDateError(
                 "Сначала закройте опрос дат командой /close_meeting_poll."
             )
-        return book, meeting_day
+        book = await self.book_for_cycle(cycle)
+        if book is None:
+            return None, meeting_day
+        title = book.title.strip() or None
+        return title, meeting_day
 
     async def prepare_meeting_poll(self) -> SuggestionCycle:
         cycle = await self.get_latest_cycle()

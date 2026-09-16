@@ -219,10 +219,12 @@ def meeting_date_announcement(
     day: date,
 ) -> str:
     title = meeting_poll_title(book) if book is not None else meeting_subject(cycle)
-    return (
-        f"Встреча по «{title}»: {format_meeting_day(day)}.\n"
-        "Дальше /create_meeting — укажите время."
+    next_step = (
+        "Дальше /create_meeting — укажите название книги и время."
+        if book is None
+        else "Дальше /create_meeting — укажите время."
     )
+    return f"Встреча по «{title}»: {format_meeting_day(day)}.\n{next_step}"
 
 
 def _localized_today(now: datetime | None) -> date:

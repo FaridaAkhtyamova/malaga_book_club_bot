@@ -100,8 +100,8 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "create_meeting",
         "Приглашение в календарь",
-        "/create_meeting — спросить время и опубликовать приглашение "
-        "(книга и дата уже выбраны)",
+        "/create_meeting — спросить название книги (если её нет) и время, "
+        "затем опубликовать приглашение",
         admin=True,
     ),
     CommandInfo(
