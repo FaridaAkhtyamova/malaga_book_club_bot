@@ -117,13 +117,31 @@ async def send_html_card(
                 message_thread_id=message_thread_id,
             )
             return
+        with suppress(TelegramBadRequest):
+            await bot.send_document(
+                chat_id,
+                document=cover_url,
+                caption=caption,
+                parse_mode=ParseMode.HTML,
+                message_thread_id=message_thread_id,
+            )
+            return
     elif cover_url:
+        sent_cover = False
         with suppress(TelegramBadRequest):
             await bot.send_photo(
                 chat_id,
                 photo=cover_url,
                 message_thread_id=message_thread_id,
             )
+            sent_cover = True
+        if not sent_cover:
+            with suppress(TelegramBadRequest):
+                await bot.send_document(
+                    chat_id,
+                    document=cover_url,
+                    message_thread_id=message_thread_id,
+                )
 
     await bot.send_message(
         chat_id,

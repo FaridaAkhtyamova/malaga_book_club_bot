@@ -62,12 +62,13 @@ class BookRepository:
         authors: str | None,
         description: str | None,
         page_count: int | None,
+        cover_url: str | None = None,
     ) -> Book:
         entity = Book(
             title=title[:255],
             authors=authors[:500] if authors else None,
             description=description,
-            cover_url=None,
+            cover_url=cover_url[:500] if cover_url else None,
             google_id=f"manual-{uuid4().hex}",
             page_count=page_count,
         )

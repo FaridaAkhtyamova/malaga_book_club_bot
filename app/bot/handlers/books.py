@@ -43,6 +43,7 @@ _KEEP_QUERY = "."
 _SUGGEST_STATES = StateFilter(BookSearchStates)
 _CANCELLED = "Отменено. Чтобы предложить книгу, снова отправьте /suggest."
 _ENTER_TITLE = "Введите название книги."
+_ENTER_COVER = "Прикрепите обложку картинкой. Если без обложки — отправьте `-`."
 
 
 @router.message(Command("suggest"))
@@ -215,50 +216,35 @@ async def process_manual_description(
 ) -> None:
     if not await _ensure_can_suggest(message, session, bot, state):
         return
-    if message.from_user is None:
-        return
 
     raw = (message.text or "").strip()
     description = None if raw == _SKIP else raw[:4000]
-    data = await state.get_data()
-    title = data.get("manual_title")
-    authors = data.get("manual_authors")
-    page_count = data.get("manual_pages")
-    if not isinstance(title, str) or not title:
-        await state.clear()
-        await message.answer(
-            "Не удалось сохранить книгу. Повторите /suggest.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+    await state.update_data(manual_description=description)
+    await state.set_state(BookSearchStates.waiting_manual_cover)
+    await message.answer(_ENTER_COVER)
+
+
+@router.message(BookSearchStates.waiting_manual_cover, F.photo)
+@router.message(BookSearchStates.waiting_manual_cover, F.document)
+@router.message(BookSearchStates.waiting_manual_cover, F.text)
+async def process_manual_cover(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    if not await _ensure_can_suggest(message, session, bot, state):
+        return
+    if message.from_user is None:
         return
 
-    authors_text = authors if isinstance(authors, str) else None
-    pages = page_count if isinstance(page_count, int) else None
-
-    await state.update_data(
-        pending={
-            "kind": "manual",
-            "title": title,
-            "authors": authors_text,
-            "description": description,
-            "page_count": pages,
-        }
-    )
-    user_repo = UserRepository(session)
-    user = await user_repo.get_or_create_user(
-        telegram_id=message.from_user.id,
-        username=message.from_user.username,
-        full_name=message.from_user.full_name,
-    )
-    preview = _preview_book(await state.get_data())
-    if preview is None:
-        await state.clear()
-        await message.answer(
-            "Не удалось подготовить карточку. Повторите /suggest.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return
-    await _ask_confirm(message, state, preview, user)
+    cover_id = _cover_file_id(message)
+    if cover_id is None:
+        raw = (message.text or "").strip()
+        if raw != _SKIP:
+            await message.answer(_ENTER_COVER)
+            return
+    await _finish_manual_card(message, state, session, cover_id)
 
 
 @router.callback_query(BookSelectCallback.filter(), _SUGGEST_STATES)
@@ -568,11 +554,12 @@ def _preview_book(data: dict[str, object]) -> Book | None:
         authors = pending.get("authors")
         description = pending.get("description")
         pages = pending.get("page_count")
+        cover_url = pending.get("cover_url")
         return Book(
             title=title[:255],
             authors=authors if isinstance(authors, str) else None,
             description=description if isinstance(description, str) else None,
-            cover_url=None,
+            cover_url=cover_url if isinstance(cover_url, str) else None,
             google_id="preview",
             page_count=pages if isinstance(pages, int) else None,
         )
@@ -602,12 +589,14 @@ async def _save_pending(
         authors = pending.get("authors")
         description = pending.get("description")
         pages = pending.get("page_count")
+        cover_url = pending.get("cover_url")
         return await ManualBookService(session).add(
             user,
             title=title,
             authors=authors if isinstance(authors, str) else None,
             description=description if isinstance(description, str) else None,
             page_count=pages if isinstance(pages, int) else None,
+            cover_url=cover_url if isinstance(cover_url, str) else None,
         )
     raise CycleNotOpenError("Не удалось сохранить книгу. Повторите /suggest.")
 
@@ -644,6 +633,75 @@ async def _send_book_card(message: Message, cover_url: str | None, caption: str)
             )
             return
         except TelegramBadRequest:
-            pass
+            try:
+                await message.answer_document(
+                    document=cover_url,
+                    caption=caption,
+                    parse_mode=ParseMode.HTML,
+                )
+                return
+            except TelegramBadRequest:
+                pass
 
     await message.answer(caption, parse_mode=ParseMode.HTML)
+
+
+async def _finish_manual_card(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    cover_url: str | None,
+) -> None:
+    if message.from_user is None:
+        return
+
+    data = await state.get_data()
+    title = data.get("manual_title")
+    authors = data.get("manual_authors")
+    page_count = data.get("manual_pages")
+    description = data.get("manual_description")
+    if not isinstance(title, str) or not title:
+        await state.clear()
+        await message.answer(
+            "Не удалось сохранить книгу. Повторите /suggest.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+
+    await state.update_data(
+        pending={
+            "kind": "manual",
+            "title": title,
+            "authors": authors if isinstance(authors, str) else None,
+            "description": description if isinstance(description, str) else None,
+            "page_count": page_count if isinstance(page_count, int) else None,
+            "cover_url": cover_url,
+        }
+    )
+    user_repo = UserRepository(session)
+    user = await user_repo.get_or_create_user(
+        telegram_id=message.from_user.id,
+        username=message.from_user.username,
+        full_name=message.from_user.full_name,
+    )
+    preview = _preview_book(await state.get_data())
+    if preview is None:
+        await state.clear()
+        await message.answer(
+            "Не удалось подготовить карточку. Повторите /suggest.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return
+    await _ask_confirm(message, state, preview, user)
+
+
+def _cover_file_id(message: Message) -> str | None:
+    if message.photo:
+        return message.photo[-1].file_id
+    document = message.document
+    if document is None:
+        return None
+    mime = (document.mime_type or "").lower()
+    if mime.startswith("image/"):
+        return document.file_id
+    return None

@@ -21,6 +21,7 @@ class ManualBookService:
         authors: str | None,
         description: str | None,
         page_count: int | None,
+        cover_url: str | None = None,
     ) -> tuple[Book, bool]:
         cycle = await self.cycle_repo.get_latest_suggesting()
         if cycle is None:
@@ -36,6 +37,7 @@ class ManualBookService:
             authors=authors,
             description=description,
             page_count=page_count,
+            cover_url=cover_url,
         )
         created = await self.suggestion_repo.add(cycle.id, book.id, user.id)
         if created is None:

@@ -7,4 +7,5 @@ class BookSearchStates(StatesGroup):
     waiting_manual_authors = State()
     waiting_manual_pages = State()
     waiting_manual_description = State()
+    waiting_manual_cover = State()
     waiting_confirm = State()
