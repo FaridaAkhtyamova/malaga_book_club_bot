@@ -2,6 +2,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputPollOption, Message, PollOption
 
+from app.bot.club_chat import send_html_card
 from app.bot.keyboards.pending_card import pending_card_keyboard
 from app.bot.keyboards.suggest import suggest_dm_keyboard
 from app.core.config import get_settings
@@ -113,11 +114,15 @@ async def publish_winner_announcement(
     bot: Bot,
     dest: ClubDestination,
     text: str,
+    cover_url: str | None = None,
 ) -> None:
-    await bot.send_message(
+    await send_html_card(
+        bot,
         dest.chat_id,
         text,
-        message_thread_id=dest.message_thread_id,
+        cover_url,
+        dest.message_thread_id,
+        parse_mode=None,
     )
 
 

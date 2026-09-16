@@ -106,6 +106,8 @@ async def send_html_card(
     caption: str,
     cover_url: str | None,
     message_thread_id: int | None = None,
+    *,
+    parse_mode: ParseMode | None = ParseMode.HTML,
 ) -> None:
     if cover_url and len(caption) <= PHOTO_CAPTION_LIMIT:
         with suppress(TelegramBadRequest):
@@ -113,7 +115,7 @@ async def send_html_card(
                 chat_id,
                 photo=cover_url,
                 caption=caption,
-                parse_mode=ParseMode.HTML,
+                parse_mode=parse_mode,
                 message_thread_id=message_thread_id,
             )
             return
@@ -122,7 +124,7 @@ async def send_html_card(
                 chat_id,
                 document=cover_url,
                 caption=caption,
-                parse_mode=ParseMode.HTML,
+                parse_mode=parse_mode,
                 message_thread_id=message_thread_id,
             )
             return
@@ -146,6 +148,6 @@ async def send_html_card(
     await bot.send_message(
         chat_id,
         caption,
-        parse_mode=ParseMode.HTML,
+        parse_mode=parse_mode,
         message_thread_id=message_thread_id,
     )

@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.club_chat import send_html_card
 from app.bot.club_publish import (
     notify_admins,
     publish_meeting_poll,
@@ -199,7 +200,12 @@ async def cmd_close_vote(
         winner = leaders[0]
         await service.apply_winner(cycle, winner)
         try:
-            await publish_winner_announcement(bot, dest, winner_announcement(cycle, winner))
+            await publish_winner_announcement(
+                bot,
+                dest,
+                winner_announcement(cycle, winner),
+                winner.cover_url,
+            )
         except TelegramAPIError as exc:
             await message.answer(f"Книга выбрана, но анонс не отправился: {exc}")
             return
@@ -429,7 +435,7 @@ async def cmd_cycle_status(message: Message, session: AsyncSession) -> None:
 
 
 @router.message(Command("month_book"))
-async def cmd_month_book(message: Message, session: AsyncSession) -> None:
+async def cmd_month_book(message: Message, session: AsyncSession, bot: Bot) -> None:
     service = CycleService(session)
     try:
         cycle = await service.get_selected_cycle()
@@ -442,7 +448,14 @@ async def cmd_month_book(message: Message, session: AsyncSession) -> None:
         await message.answer("Сначала закройте голосование за книгу командой /close_vote.")
         return
 
-    await message.answer(winner_announcement(cycle, book))
+    await send_html_card(
+        bot,
+        message.chat.id,
+        winner_announcement(cycle, book),
+        book.cover_url,
+        message.message_thread_id,
+        parse_mode=None,
+    )
 
 
 async def _finish_meeting_poll(
