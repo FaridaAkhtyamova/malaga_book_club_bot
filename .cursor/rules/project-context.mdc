@@ -28,6 +28,6 @@ Handlers → Services → Repositories → Models
 ## Status
 
 - Alembic: initial tables → suggestion cycles → suggest topic → vote/meeting polls + winner fields
-- Cycle: open next month → hashtag in group or `/suggest` in DM → `/start_vote` → `/close_vote` (runoff on tie; meeting-date poll on a single winner) → `/close_meeting_poll` → `/create_meeting` (`.ics`)
+- Cycle: open next month → hashtag in group or `/suggest` in DM → `/start_vote` → `/close_vote` (runoff on tie; meeting-date poll on a single winner) → `/close_meeting_poll` → `/create_meeting` (`.ics`; date can be typed if there was no poll)
 - Scheduler opens suggestions and starts book polls; it does not close them
 - `DEBUG=true` allows reopening the same month

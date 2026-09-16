@@ -82,10 +82,6 @@ class NoWinnerError(CycleServiceError):
     """The latest vote has not produced a winning book yet."""
 
 
-class NoMeetingDateError(CycleServiceError):
-    """The meeting-date poll has not produced a winning day yet."""
-
-
 class MeetingPollsAlreadyOpenError(CycleServiceError):
     """This cycle already has a live meeting-date poll."""
 
@@ -288,13 +284,11 @@ class CycleService:
             )
         return book
 
-    async def get_selected_meeting(self) -> tuple[str | None, date]:
+    async def get_selected_meeting(self) -> tuple[str | None, date | None]:
         cycle = await self.get_latest_cycle()
         meeting_day = None if cycle is None else cycle.winner_meeting_date
-        if cycle is None or meeting_day is None:
-            raise NoMeetingDateError(
-                "Сначала закройте опрос дат командой /close_meeting_poll."
-            )
+        if cycle is None:
+            return None, meeting_day
         book = await self.book_for_cycle(cycle)
         if book is None:
             return None, meeting_day
