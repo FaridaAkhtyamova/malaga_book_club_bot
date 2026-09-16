@@ -7,6 +7,7 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.club_publish import (
+    notify_admins,
     publish_meeting_poll,
     publish_vote_polls,
     publish_winner_announcement,
@@ -34,6 +35,7 @@ from app.services.cycle_service import (
 from app.services.meeting_poll import (
     chunk_dates_for_polls,
     format_meeting_day,
+    meeting_date_admin_prompt,
     meeting_date_announcement,
     meeting_poll_options,
     meeting_runoff_options,
@@ -353,6 +355,7 @@ async def cmd_close_meeting_poll(
         except TelegramAPIError as exc:
             await message.answer(f"Дата выбрана, но анонс не отправился: {exc}")
             return
+        await notify_admins(bot, meeting_date_admin_prompt(book, winner_day))
         if not same_thread:
             await message.answer("Опрос дат закрыт. Дата встречи опубликована в группе.")
         return

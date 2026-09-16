@@ -1,8 +1,9 @@
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputPollOption, Message, PollOption
 
 from app.bot.keyboards.suggest import suggest_dm_keyboard
+from app.core.config import get_settings
 from app.db.models import Book, MeetingPoll, SuggestionCycle, VotePoll
 from app.services.club_destination import ClubDestination
 from app.services.cycle_service import (
@@ -116,6 +117,14 @@ async def publish_winner_announcement(
         text,
         message_thread_id=dest.message_thread_id,
     )
+
+
+async def notify_admins(bot: Bot, text: str) -> None:
+    for admin_id in get_settings().admin_ids:
+        try:
+            await bot.send_message(admin_id, text)
+        except TelegramAPIError:
+            continue
 
 
 async def publish_meeting_invite(bot: Bot, dest: ClubDestination, invite: MeetingInvite) -> None:

@@ -219,12 +219,22 @@ def meeting_date_announcement(
     day: date,
 ) -> str:
     title = meeting_poll_title(book) if book is not None else meeting_subject(cycle)
-    next_step = (
-        "Дальше /create_meeting — укажите название книги и время."
-        if book is None
-        else "Дальше /create_meeting — укажите время."
+    return f"📅 Встреча по «{title}»: {format_meeting_day(day)}."
+
+
+def meeting_date_admin_prompt(book: Book | None, day: date) -> str:
+    formatted = format_meeting_day(day)
+    if book is None:
+        return (
+            f"Дата встречи выбрана: {formatted}.\n"
+            "Напишите /create_meeting, затем название книги и время — "
+            "опубликуется приглашение в календарь."
+        )
+    return (
+        f"Дата встречи по «{meeting_poll_title(book)}»: {formatted}.\n"
+        "Напишите /create_meeting и укажите время — "
+        "опубликуется приглашение в календарь."
     )
-    return f"📅 Встреча по «{title}»: {format_meeting_day(day)}.\n{next_step}"
 
 
 def _localized_today(now: datetime | None) -> date:
