@@ -81,6 +81,36 @@ def test_parse_group_card_without_pages() -> None:
     assert parsed.description is None
 
 
+def test_parse_single_digit_pages() -> None:
+    parsed = parse_hashtag_suggestion(
+        "#выбор_книги\n"
+        "Название книги\n"
+        "Фарида\n"
+        "1 стр\n"
+        "описание книги"
+    )
+    assert parsed is not None
+    assert parsed.title == "Название книги"
+    assert parsed.authors == "Фарида"
+    assert parsed.page_count == 1
+    assert parsed.description == "описание книги"
+
+
+def test_parse_stranitsy_word_not_split() -> None:
+    parsed = parse_hashtag_suggestion(
+        "#выбор_книги\n"
+        "новая книга 1\n"
+        "Имя Автора\n"
+        "23 страницы\n"
+        "Далее описание"
+    )
+    assert parsed is not None
+    assert parsed.title == "новая книга 1"
+    assert parsed.authors == "Имя Автора"
+    assert parsed.page_count == 23
+    assert parsed.description == "Далее описание"
+
+
 def test_parse_hashtag_only_has_no_title() -> None:
     parsed = parse_hashtag_suggestion("#выбор_книги")
     assert parsed is not None
