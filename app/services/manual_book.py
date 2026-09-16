@@ -30,6 +30,10 @@ class ManualBookService:
         needle = title.casefold()
         for existing in await self.suggestion_repo.list_books(cycle.id):
             if existing.title.casefold() == needle:
+                if cover_url and existing.cover_url is None:
+                    existing.cover_url = cover_url[:500]
+                    await self.session.commit()
+                    await self.session.refresh(existing)
                 return existing, False
 
         book = await self.book_repo.create_manual(

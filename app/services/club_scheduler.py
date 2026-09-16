@@ -58,7 +58,7 @@ async def run_scheduled_jobs(bot: Bot) -> None:
                 text = _announcement_from_scheduled(action.text)
                 await publish_club_announcement(bot, dest, text)
             elif isinstance(action, ScheduledPendingReview):
-                await send_pending_card_reviews(bot, action.cards)
+                await send_pending_card_reviews(bot, action.cards, session)
             elif isinstance(action, ScheduledVote):
                 published = await publish_vote_polls(bot, dest, action.cycle, action.chunks)
                 await service.record_vote_polls(action.cycle, published)

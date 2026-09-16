@@ -2,9 +2,12 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputPollOption, Message, PollOption
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.bot.club_chat import send_html_card
 from app.bot.keyboards.pending_card import pending_card_keyboard
 from app.bot.keyboards.suggest import suggest_dm_keyboard
+from app.bot.media import cover_file_id
 from app.core.config import get_settings
 from app.db.models import Book, MeetingPoll, PendingGroupCard, SuggestionCycle, VotePoll
 from app.services.club_destination import ClubDestination
@@ -24,7 +27,7 @@ from app.services.meeting_poll import (
     option_date_isos,
     option_labels,
 )
-from app.services.pending_group_card import format_card_preview
+from app.services.pending_group_card import PendingGroupCardService, format_card_preview
 from app.services.vote_close import add_poll_votes, runoff_intro_text, runoff_question
 
 _POLL_INTRO = (
@@ -140,7 +143,11 @@ _PENDING_INTRO = (
 )
 
 
-async def send_pending_card_reviews(bot: Bot, cards: list[PendingGroupCard]) -> None:
+async def send_pending_card_reviews(
+    bot: Bot,
+    cards: list[PendingGroupCard],
+    session: AsyncSession,
+) -> None:
     if not cards:
         return
     for admin_id in get_settings().admin_ids:
@@ -149,16 +156,26 @@ async def send_pending_card_reviews(bot: Bot, cards: list[PendingGroupCard]) -> 
         except TelegramAPIError:
             continue
         for card in cards:
-            await _send_pending_card(bot, admin_id, card)
+            await _send_pending_card(bot, admin_id, card, session)
 
 
-async def _send_pending_card(bot: Bot, admin_id: int, card: PendingGroupCard) -> None:
+async def _send_pending_card(
+    bot: Bot,
+    admin_id: int,
+    card: PendingGroupCard,
+    session: AsyncSession,
+) -> None:
     try:
-        await bot.forward_message(
+        forwarded = await bot.forward_message(
             chat_id=admin_id,
             from_chat_id=card.chat_id,
             message_id=card.message_id,
         )
+        file_id = cover_file_id(forwarded)
+        if file_id:
+            saved = await PendingGroupCardService(session).set_cover(card.id, file_id)
+            if saved is not None:
+                card.cover_url = saved.cover_url
     except TelegramAPIError:
         pass
     try:

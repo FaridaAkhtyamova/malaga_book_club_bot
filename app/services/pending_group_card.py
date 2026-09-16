@@ -41,6 +41,7 @@ class PendingGroupCardService:
         message_id: int,
         raw_text: str,
         parsed: HashtagSuggestion | None,
+        cover_url: str | None = None,
     ) -> tuple[PendingGroupCard, bool]:
         cycle = await self.cycle_repo.get_latest_suggesting()
         if cycle is None:
@@ -63,6 +64,7 @@ class PendingGroupCardService:
                     authors=authors,
                     description=description,
                     page_count=page_count,
+                    cover_url=cover_url,
                     status=PendingGroupCard.STATUS_PENDING,
                 )
             )
@@ -75,6 +77,8 @@ class PendingGroupCardService:
         existing.authors = authors
         existing.description = description
         existing.page_count = page_count
+        if cover_url:
+            existing.cover_url = cover_url
         return await self.card_repo.save(existing), False
 
     async def get_pending(self, card_id: int) -> PendingGroupCard:
@@ -82,6 +86,15 @@ class PendingGroupCardService:
         if card is None or card.status != PendingGroupCard.STATUS_PENDING:
             raise PendingCardNotFoundError("Эта карточка уже разобрана или не найдена.")
         return card
+
+    async def set_cover(self, card_id: int, cover_url: str) -> PendingGroupCard | None:
+        card = await self.card_repo.get(card_id)
+        if card is None or card.status != PendingGroupCard.STATUS_PENDING:
+            return None
+        if card.cover_url:
+            return card
+        card.cover_url = cover_url[:500]
+        return await self.card_repo.save(card)
 
     async def apply_edits(
         self,
@@ -118,6 +131,7 @@ class PendingGroupCardService:
             authors=claimed.authors,
             description=claimed.description,
             page_count=claimed.page_count,
+            cover_url=claimed.cover_url,
         )
         return claimed, created
 

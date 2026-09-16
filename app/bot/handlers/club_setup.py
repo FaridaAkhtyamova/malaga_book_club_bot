@@ -130,7 +130,7 @@ async def cmd_start_vote(
         await message.answer(str(exc))
         return
     except PendingGroupCardsNeedReviewError as exc:
-        await send_pending_card_reviews(bot, exc.cards)
+        await send_pending_card_reviews(bot, exc.cards, session)
         await message.answer("Сначала проверьте карточки из группы в личке.")
         return
     except NotEnoughBooksError as exc:

@@ -24,6 +24,7 @@ from app.bot.keyboards.book import (
     search_results_keyboard,
     suggest_control_keyboard,
 )
+from app.bot.media import cover_file_id
 from app.bot.states.book import BookSearchStates
 from app.db.models import Book, User
 from app.repositories.user_repo import UserRepository
@@ -238,7 +239,7 @@ async def process_manual_cover(
     if message.from_user is None:
         return
 
-    cover_id = _cover_file_id(message)
+    cover_id = cover_file_id(message)
     if cover_id is None:
         raw = (message.text or "").strip()
         if raw != _SKIP:
@@ -693,15 +694,3 @@ async def _finish_manual_card(
         )
         return
     await _ask_confirm(message, state, preview, user)
-
-
-def _cover_file_id(message: Message) -> str | None:
-    if message.photo:
-        return message.photo[-1].file_id
-    document = message.document
-    if document is None:
-        return None
-    mime = (document.mime_type or "").lower()
-    if mime.startswith("image/"):
-        return document.file_id
-    return None

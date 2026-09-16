@@ -5,6 +5,7 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.club_chat import resolve_suggest_access
+from app.bot.media import cover_file_id
 from app.repositories.user_repo import UserRepository
 from app.services.cycle_service import CycleNotOpenError, CycleService
 from app.services.hashtag_suggest import GROUP_HINT, parse_hashtag_suggestion
@@ -54,6 +55,7 @@ async def on_hashtag_suggestion(
             message_id=message.message_id,
             raw_text=raw_text,
             parsed=parsed,
+            cover_url=cover_file_id(message),
         )
     except CycleNotOpenError:
         await message.reply("Предложения ещё не открыты.")

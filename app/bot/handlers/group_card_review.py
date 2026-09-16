@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from aiogram import F, Router
+from contextlib import suppress
+
+from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
@@ -8,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.callbacks.pending_card import PendingCardCallback
 from app.bot.filters.admin_filter import AdminFilter
+from app.bot.media import cover_file_id
 from app.bot.states.pending_card import PendingCardStates
 from app.db.models import PendingGroupCard
 from app.services.cycle_service import CycleNotOpenError
@@ -34,6 +38,7 @@ async def on_pending_card(
     callback_data: PendingCardCallback,
     state: FSMContext,
     session: AsyncSession,
+    bot: Bot,
 ) -> None:
     service = PendingGroupCardService(session)
     message = callback.message if isinstance(callback.message, Message) else None
@@ -68,6 +73,14 @@ async def on_pending_card(
     if callback_data.action != "ok":
         await callback.answer()
         return
+
+    if callback.from_user is not None:
+        try:
+            card = await service.get_pending(callback_data.card_id)
+        except PendingCardNotFoundError as exc:
+            await callback.answer(str(exc), show_alert=True)
+            return
+        await _ensure_cover(bot, service, card, callback.from_user.id)
 
     try:
         _, created = await service.approve(callback_data.card_id)
@@ -158,6 +171,7 @@ async def process_review_description(
     message: Message,
     state: FSMContext,
     session: AsyncSession,
+    bot: Bot,
 ) -> None:
     card = await _card_from_state(state, session)
     if card is None:
@@ -184,6 +198,8 @@ async def process_review_description(
             description=description,
             page_count=page_count,
         )
+        if message.from_user is not None:
+            await _ensure_cover(bot, service, card, message.from_user.id)
         _, created = await service.approve(card.id)
     except PendingCardNeedsTitleError as exc:
         await message.answer(str(exc))
@@ -197,6 +213,29 @@ async def process_review_description(
     added = "Книга в списке на голосование." if created else "Эта книга уже была в списке."
     leftover = await _after_review(service, card.id)
     await message.answer(f"{added}\n{leftover}")
+
+
+async def _ensure_cover(
+    bot: Bot,
+    service: PendingGroupCardService,
+    card: PendingGroupCard,
+    admin_id: int,
+) -> None:
+    if card.cover_url:
+        return
+    try:
+        copied = await bot.copy_message(
+            chat_id=admin_id,
+            from_chat_id=card.chat_id,
+            message_id=card.message_id,
+        )
+    except TelegramAPIError:
+        return
+    file_id = cover_file_id(copied)
+    with suppress(TelegramAPIError):
+        await bot.delete_message(copied.chat.id, copied.message_id)
+    if file_id:
+        await service.set_cover(card.id, file_id)
 
 
 async def _card_from_state(state: FSMContext, session: AsyncSession) -> PendingGroupCard | None:
