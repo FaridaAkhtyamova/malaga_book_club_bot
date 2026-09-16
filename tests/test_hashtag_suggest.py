@@ -3,7 +3,7 @@ from app.services.hashtag_suggest import parse_hashtag_suggestion
 
 def test_parse_title_pages_and_description() -> None:
     parsed = parse_hashtag_suggestion(
-        "#выбор_книги Имя Розы, 500\nДетектив про монастырь."
+        "#выбор_книги Имя Розы, 500 стр.\nДетектив про монастырь."
     )
     assert parsed is not None
     assert parsed.title == "Имя Розы"
@@ -13,7 +13,7 @@ def test_parse_title_pages_and_description() -> None:
 
 
 def test_parse_is_case_insensitive() -> None:
-    parsed = parse_hashtag_suggestion("#Выбор_Книги Дюна 412")
+    parsed = parse_hashtag_suggestion("#Выбор_Книги Дюна 412 страниц")
     assert parsed is not None
     assert parsed.title == "Дюна"
     assert parsed.page_count == 412
@@ -27,6 +27,13 @@ def test_parse_title_without_pages() -> None:
     assert parsed.page_count is None
 
 
+def test_parse_bare_number_is_not_pages() -> None:
+    parsed = parse_hashtag_suggestion("#выбор_книги Имя Розы, 500")
+    assert parsed is not None
+    assert parsed.title == "Имя Розы, 500"
+    assert parsed.page_count is None
+
+
 def test_parse_group_card() -> None:
     parsed = parse_hashtag_suggestion(
         "📖 #выбор_книги\n"
@@ -35,6 +42,21 @@ def test_parse_group_card() -> None:
         "объём страниц: 500\n"
         "Предложил(а): @ann\n"
         "\n"
+        "Детектив про монастырь."
+    )
+    assert parsed is not None
+    assert parsed.title == "Имя Розы"
+    assert parsed.authors == "Умберто Эко"
+    assert parsed.page_count == 500
+    assert parsed.description == "Детектив про монастырь."
+
+
+def test_parse_pages_anywhere() -> None:
+    parsed = parse_hashtag_suggestion(
+        "#выбор_книги\n"
+        "Имя Розы\n"
+        "500 стр.\n"
+        "Умберто Эко\n"
         "Детектив про монастырь."
     )
     assert parsed is not None

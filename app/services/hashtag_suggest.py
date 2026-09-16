@@ -7,24 +7,36 @@ HASHTAG = "#выбор_книги"
 _DESCRIPTION_LIMIT = 4000
 
 _HASHTAG_RE = re.compile(r"#выбор_книги", re.IGNORECASE)
-_COMPACT_RE = re.compile(
-    r"^(?P<title>.+?)(?:[\s,;:–—\-]+"
-    r"(?P<pages>\d{2,5})\s*(?:стр\.?|страниц[аыу]?)?)?\s*$",
-    re.IGNORECASE,
-)
-_PAGES_LINE_RE = re.compile(
-    r"^(?:объём страниц:\s*)?(?P<pages>\d{2,5})\s*(?:стр\.?|страниц[аыу]?)?\s*$",
+_PAGES_RE = re.compile(
+    r"(?:"
+    r"объём\s+страниц\s*[:\-]?\s*(\d{2,5})"
+    r"|"
+    r"(\d{2,5})\s*(?:стр\.?|страниц[аыуе]?)"
+    r"|"
+    r"(?:стр\.?|страниц[аыуе]?)\s*[:\-]?\s*(\d{2,5})"
+    r")",
     re.IGNORECASE,
 )
 _PAGES_MISSING_RE = re.compile(r"^объём страниц не указан$", re.IGNORECASE)
 _AUTHOR_MISSING_RE = re.compile(r"^автор не указан$", re.IGNORECASE)
 _PROPOSED_RE = re.compile(r"^предложил", re.IGNORECASE)
 
+CARD_TEMPLATE = (
+    f"📖 {HASHTAG}\n"
+    "Название книги\n"
+    "Автор\n"
+    "500 стр.\n"
+    "\n"
+    "Краткое описание книги"
+)
+
 GROUP_HINT = (
-    f"📖 В группе запостите карточку с тегом {HASHTAG}. "
-    "Перед голосованием её проверит админ.\n"
-    f"{HASHTAG} Название книги, 500\n"
-    "Краткое описание книги\n\n"
+    f"📖 В группе запостите карточку:\n"
+    f"{CARD_TEMPLATE}\n\n"
+    "После тега — название, затем автор. "
+    "Число страниц бот найдёт в любой строке со словами «стр» / «страниц». "
+    "Кто предложил — из вашего сообщения.\n"
+    "Обложку можно прикрепить картинкой.\n"
     "Поиск по каталогу и добавление вручную — только в личке с ботом: /suggest"
 )
 
@@ -47,61 +59,61 @@ def parse_hashtag_suggestion(text: str) -> HashtagSuggestion | None:
             continue
         leftover = _HASHTAG_RE.sub(" ", line, count=1)
         leftover = re.sub(r"[📖]", " ", leftover)
-        leftover = re.sub(r"\s+", " ", leftover).strip(" \t,;—-")
+        leftover = leftover.strip()
         rest = lines[index + 1 :]
         if leftover:
-            return _parse_compact(leftover, rest)
-        return _parse_card(rest)
+            return _parse_same_line(leftover, rest)
+        return _parse_body(rest)
     return HashtagSuggestion()
 
 
-def _parse_compact(first_line: str, rest: list[str]) -> HashtagSuggestion:
-    match = _COMPACT_RE.match(first_line)
-    title: str | None = None
-    page_count: int | None = None
-    if match is not None:
-        title = re.sub(r"\s+", " ", match.group("title")).strip(" \t,;—-") or None
-        raw_pages = match.group("pages")
-        if raw_pages is not None:
-            pages = int(raw_pages)
-            page_count = pages if pages >= 1 else None
-    elif first_line:
-        title = first_line[:255]
-
-    description = _join_description(rest)
+def _parse_same_line(first_line: str, rest: list[str]) -> HashtagSuggestion:
+    parsed = _parse_body([first_line, *rest])
+    title = parsed.title
+    description_parts: list[str] = []
+    if parsed.authors:
+        description_parts.append(parsed.authors)
+    if parsed.description:
+        description_parts.append(parsed.description)
     return HashtagSuggestion(
-        title=title[:255] if title else None,
-        page_count=page_count,
-        description=description,
+        title=title,
+        authors=None,
+        page_count=parsed.page_count,
+        description=_join_description(description_parts),
     )
 
 
-def _parse_card(lines: list[str]) -> HashtagSuggestion:
-    cleaned = [_normalize_line(line) for line in lines]
-    cleaned = [line for line in cleaned if line]
-    if not cleaned:
-        return HashtagSuggestion()
-
-    title = cleaned[0][:255]
+def _parse_body(lines: list[str]) -> HashtagSuggestion:
     page_count: int | None = None
-    authors: str | None = None
-    authors_consumed = False
-    body: list[str] = []
-    for line in cleaned[1:]:
+    kept: list[str] = []
+    for raw in lines:
+        line = _normalize_line(raw)
+        if not line:
+            continue
         if _PROPOSED_RE.match(line):
             continue
         if _PAGES_MISSING_RE.match(line):
             continue
-        pages = _pages_from_line(line)
+        pages = _pages_from_text(line)
         if pages is not None and page_count is None:
             page_count = pages
+            remainder = _strip_pages(line)
+            if remainder:
+                kept.append(remainder)
             continue
-        if not authors_consumed and not body:
-            authors_consumed = True
-            if not _AUTHOR_MISSING_RE.match(line):
-                authors = line[:500]
-            continue
-        body.append(line)
+        kept.append(line)
+
+    if not kept:
+        return HashtagSuggestion(page_count=page_count)
+
+    title = kept[0][:255]
+    authors: str | None = None
+    body: list[str] = []
+    if len(kept) >= 2:
+        second = kept[1]
+        if not _AUTHOR_MISSING_RE.match(second):
+            authors = second[:500]
+        body = kept[2:]
 
     return HashtagSuggestion(
         title=title,
@@ -111,12 +123,23 @@ def _parse_card(lines: list[str]) -> HashtagSuggestion:
     )
 
 
-def _pages_from_line(line: str) -> int | None:
-    match = _PAGES_LINE_RE.match(line)
+def _pages_from_text(text: str) -> int | None:
+    match = _PAGES_RE.search(text)
     if match is None:
         return None
-    pages = int(match.group("pages"))
-    return pages if pages >= 1 else None
+    for group in match.groups():
+        if group is None:
+            continue
+        pages = int(group)
+        if pages >= 1:
+            return pages
+    return None
+
+
+def _strip_pages(line: str) -> str:
+    stripped = _PAGES_RE.sub(" ", line, count=1)
+    stripped = re.sub(r"[\s,;:–—\-]+", " ", stripped).strip(" \t,;—-")
+    return stripped
 
 
 def _normalize_line(line: str) -> str:

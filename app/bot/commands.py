@@ -5,12 +5,12 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
 
 from app.core.config import get_settings
+from app.services.hashtag_suggest import CARD_TEMPLATE
 
 _HASHTAG_HINT = (
-    "В группе, пока сбор открыт, можно запостить карточку с #выбор_книги. "
-    "Перед голосованием админ проверит её в личке.\n"
-    "#выбор_книги Название книги, 500\n"
-    "Краткое описание книги"
+    "В группе, пока сбор открыт, запостите карточку: после тега название, затем автор. "
+    "Страницы — в любой строке со словами «стр» / «страниц». Кто предложил — из сообщения.\n"
+    f"{CARD_TEMPLATE}"
 )
 
 

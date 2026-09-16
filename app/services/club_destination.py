@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import ClubSettings
 from app.repositories.settings_repo import SettingsRepository
 from app.services.cycle_service import GroupNotSetError, month_name_ru
+from app.services.hashtag_suggest import CARD_TEMPLATE
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +54,10 @@ class DestinationService:
 def suggestion_announcement_text(month: int) -> str:
     return (
         f"📚 Дорогой клуб, начинаем предлагать книги на {month_name_ru(month)}.\n\n"
-        "В группе запостите карточку с #выбор_книги — перед голосованием её проверит админ.\n"
-        "#выбор_книги Название книги, 500\n"
-        "Краткое описание книги\n\n"
+        "В группе запостите карточку. После тега — название, затем автор. "
+        "Число страниц бот найдёт в любой строке со словами «стр» / «страниц». "
+        "Кто предложил — из вашего сообщения. Перед голосованием карточку проверит админ.\n"
+        f"{CARD_TEMPLATE}\n\n"
+        "Обложку можно прикрепить картинкой.\n"
         "Поиск по каталогу — в личке с ботом, кнопка ниже."
     )
