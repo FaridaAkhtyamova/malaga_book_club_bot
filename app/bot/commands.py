@@ -91,9 +91,17 @@ COMMANDS: tuple[CommandInfo, ...] = (
         admin=True,
     ),
     CommandInfo(
+        "close_meeting_poll",
+        "Закрыть опрос дат и выбрать день",
+        "/close_meeting_poll — закрыть опрос дат, выбрать день "
+        "или запустить второй тур при ничьей",
+        admin=True,
+    ),
+    CommandInfo(
         "create_meeting",
         "Приглашение в календарь",
-        "/create_meeting — спросить дату и время и опубликовать приглашение в календарь",
+        "/create_meeting — спросить время и опубликовать приглашение "
+        "(книга и дата уже выбраны)",
         admin=True,
     ),
     CommandInfo(

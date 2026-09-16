@@ -1,6 +1,15 @@
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -116,11 +125,15 @@ class SuggestionCycle(Base):
     status: Mapped[str] = mapped_column(String(50), default=STATUS_SUGGESTING, nullable=False)
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     winner_book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True)
+    winner_meeting_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     suggestions: Mapped[list["Suggestion"]] = relationship(
         back_populates="cycle", cascade="all, delete-orphan"
     )
     vote_polls: Mapped[list["VotePoll"]] = relationship(
+        back_populates="cycle", cascade="all, delete-orphan"
+    )
+    meeting_polls: Mapped[list["MeetingPoll"]] = relationship(
         back_populates="cycle", cascade="all, delete-orphan"
     )
     winner: Mapped[Book | None] = relationship(
@@ -142,6 +155,21 @@ class VotePoll(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     cycle: Mapped[SuggestionCycle] = relationship(back_populates="vote_polls")
+
+
+class MeetingPoll(Base):
+    __tablename__ = "meeting_polls"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    cycle_id: Mapped[int] = mapped_column(ForeignKey("suggestion_cycles.id"), nullable=False)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    telegram_poll_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    option_dates: Mapped[list[str | None]] = mapped_column(JSONB, nullable=False)
+    is_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    cycle: Mapped[SuggestionCycle] = relationship(back_populates="meeting_polls")
 
 
 class Suggestion(Base):

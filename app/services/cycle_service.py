@@ -4,16 +4,17 @@ import html
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.db.models import Book, ClubSettings, SuggestionCycle, User, VotePoll
+from app.db.models import Book, ClubSettings, MeetingPoll, SuggestionCycle, User, VotePoll
 from app.repositories.book_repo import BookRepository
 from app.repositories.cycle_repo import CycleRepository
 from app.repositories.cycle_vote_repo import CycleVoteRepository
+from app.repositories.meeting_poll_repo import MeetingPollRepository
 from app.repositories.settings_repo import SettingsRepository
 from app.repositories.suggestion_repo import SuggestionRepository
 from app.repositories.vote_poll_repo import VotePollRepository
@@ -81,6 +82,18 @@ class NoWinnerError(CycleServiceError):
     """The latest vote has not produced a winning book yet."""
 
 
+class NoMeetingDateError(CycleServiceError):
+    """The meeting-date poll has not produced a winning day yet."""
+
+
+class MeetingPollsAlreadyOpenError(CycleServiceError):
+    """This cycle already has a live meeting-date poll."""
+
+
+class NoOpenMeetingPollsError(CycleServiceError):
+    """There is no recorded meeting-date poll the bot can close."""
+
+
 @dataclass(frozen=True, slots=True)
 class ScheduledAnnounce:
     text: str
@@ -100,6 +113,14 @@ class PublishedVotePoll:
     book_ids: list[int]
 
 
+@dataclass(frozen=True, slots=True)
+class PublishedMeetingPoll:
+    chat_id: int
+    message_id: int
+    telegram_poll_id: str | None
+    option_dates: list[str | None]
+
+
 class CycleService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -109,6 +130,7 @@ class CycleService:
         self.suggestion_repo = SuggestionRepository(session)
         self.book_repo = BookRepository(session)
         self.vote_poll_repo = VotePollRepository(session)
+        self.meeting_poll_repo = MeetingPollRepository(session)
 
     async def get_settings(self) -> ClubSettings:
         return await self.settings_repo.get_or_create()
@@ -243,13 +265,75 @@ class CycleService:
     ) -> SuggestionCycle:
         return await self.cycle_repo.set_status(cycle, SuggestionCycle.STATUS_SUGGESTING)
 
-    async def get_selected_book(self) -> Book:
+    async def get_selected_cycle(self) -> SuggestionCycle:
         cycle = await self.cycle_vote_repo.get_latest_with_winner()
         if cycle is None or cycle.winner is None:
             raise NoWinnerError(
                 "Сначала закройте голосование за книгу командой /close_vote."
             )
-        return cycle.winner
+        return cycle
+
+    async def get_selected_book(self) -> Book:
+        cycle = await self.get_selected_cycle()
+        book = cycle.winner
+        if book is None:
+            raise NoWinnerError(
+                "Сначала закройте голосование за книгу командой /close_vote."
+            )
+        return book
+
+    async def get_selected_meeting(self) -> tuple[Book, date]:
+        cycle = await self.get_selected_cycle()
+        book = cycle.winner
+        meeting_day = cycle.winner_meeting_date
+        if book is None:
+            raise NoWinnerError(
+                "Сначала закройте голосование за книгу командой /close_vote."
+            )
+        if meeting_day is None:
+            raise NoMeetingDateError(
+                "Сначала закройте опрос дат командой /close_meeting_poll."
+            )
+        return book, meeting_day
+
+    async def prepare_meeting_poll(self) -> SuggestionCycle:
+        cycle = await self.get_selected_cycle()
+        open_polls = await self.meeting_poll_repo.list_open(cycle.id)
+        if open_polls:
+            raise MeetingPollsAlreadyOpenError(
+                "Опрос дат уже идёт. Когда время вышло, закройте его командой /close_meeting_poll."
+            )
+        if cycle.winner_meeting_date is not None:
+            await self.cycle_vote_repo.clear_meeting_date(cycle)
+        return cycle
+
+    async def record_meeting_poll(self, cycle: SuggestionCycle, poll: PublishedMeetingPoll) -> None:
+        await self.meeting_poll_repo.add(
+            cycle_id=cycle.id,
+            chat_id=poll.chat_id,
+            message_id=poll.message_id,
+            telegram_poll_id=poll.telegram_poll_id,
+            option_dates=poll.option_dates,
+        )
+
+    async def require_open_meeting_polls(self, cycle: SuggestionCycle) -> list[MeetingPoll]:
+        polls = await self.meeting_poll_repo.list_open(cycle.id)
+        if not polls:
+            raise NoOpenMeetingPollsError(
+                "Нет опроса дат, который бот может закрыть. "
+                "Запустите /start_meeting_poll ещё раз — старый опрос в чате не считается."
+            )
+        return polls
+
+    async def mark_meeting_poll_closed(self, poll: MeetingPoll) -> None:
+        await self.meeting_poll_repo.mark_closed(poll)
+
+    async def apply_meeting_date(
+        self,
+        cycle: SuggestionCycle,
+        meeting_day: date,
+    ) -> SuggestionCycle:
+        return await self.cycle_vote_repo.set_meeting_date(cycle, meeting_day)
 
     async def books_by_ids(self, ids: Sequence[int]) -> list[Book]:
         return await self.book_repo.get_by_ids(ids)

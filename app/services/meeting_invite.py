@@ -8,7 +8,6 @@ from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
-from app.services.meeting_poll import get_selected_book_title
 
 MEETING_DURATION = timedelta(minutes=90)
 ICS_FILENAME = "knizhny-klub.ics"
@@ -61,9 +60,8 @@ class MeetingInvite:
     filename: str = ICS_FILENAME
 
 
-def event_title(book_title: str | None = None) -> str:
-    name = book_title if book_title is not None else get_selected_book_title()
-    return f"книжный клуб {name}"
+def event_title(book_title: str) -> str:
+    return f"книжный клуб {book_title}"
 
 
 def parse_meeting_date(raw: str, *, now: datetime | None = None) -> date:
@@ -113,7 +111,7 @@ def build_meeting_start(
     return start
 
 
-def build_meeting_invite(start: datetime, *, book_title: str | None = None) -> MeetingInvite:
+def build_meeting_invite(start: datetime, *, book_title: str) -> MeetingInvite:
     title = event_title(book_title)
     end = start + MEETING_DURATION
     return MeetingInvite(

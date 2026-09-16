@@ -1,3 +1,5 @@
+from datetime import date
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -33,6 +35,18 @@ class CycleVoteRepository:
     async def set_winner(self, cycle: SuggestionCycle, book_id: int) -> SuggestionCycle:
         cycle.winner_book_id = book_id
         cycle.status = SuggestionCycle.STATUS_CLOSED
+        await self.session.commit()
+        await self.session.refresh(cycle)
+        return cycle
+
+    async def set_meeting_date(self, cycle: SuggestionCycle, meeting_day: date) -> SuggestionCycle:
+        cycle.winner_meeting_date = meeting_day
+        await self.session.commit()
+        await self.session.refresh(cycle)
+        return cycle
+
+    async def clear_meeting_date(self, cycle: SuggestionCycle) -> SuggestionCycle:
+        cycle.winner_meeting_date = None
         await self.session.commit()
         await self.session.refresh(cycle)
         return cycle

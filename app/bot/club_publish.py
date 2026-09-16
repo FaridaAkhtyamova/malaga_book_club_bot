@@ -1,18 +1,27 @@
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BufferedInputFile, InputPollOption, Message
+from aiogram.types import BufferedInputFile, InputPollOption, Message, PollOption
 
 from app.bot.keyboards.meeting import calendar_keyboard
 from app.bot.keyboards.suggest import suggest_dm_keyboard
-from app.db.models import Book, SuggestionCycle, VotePoll
+from app.db.models import Book, MeetingPoll, SuggestionCycle, VotePoll
 from app.services.club_destination import ClubDestination
 from app.services.cycle_service import (
+    PublishedMeetingPoll,
     PublishedVotePoll,
     format_poll_option,
     poll_question,
 )
 from app.services.meeting_invite import MeetingInvite
-from app.services.meeting_poll import meeting_poll_intro, meeting_poll_question
+from app.services.meeting_poll import (
+    MeetingDateOption,
+    meeting_date_runoff_intro,
+    meeting_date_runoff_question,
+    meeting_poll_intro,
+    meeting_poll_question,
+    option_date_isos,
+    option_labels,
+)
 from app.services.vote_close import add_poll_votes, runoff_intro_text, runoff_question
 
 _POLL_INTRO = (
@@ -125,20 +134,46 @@ async def publish_meeting_poll(
     bot: Bot,
     dest: ClubDestination,
     title: str,
-    options: list[str],
-) -> None:
-    await bot.send_message(
-        dest.chat_id,
-        meeting_poll_intro(title),
-        message_thread_id=dest.message_thread_id,
-    )
-    poll_options: list[InputPollOption | str] = list(options)
-    await bot.send_poll(
+    choices: list[MeetingDateOption],
+    *,
+    runoff: bool = False,
+    send_intro: bool = True,
+) -> PublishedMeetingPoll | None:
+    if send_intro:
+        intro = meeting_date_runoff_intro() if runoff else meeting_poll_intro(title)
+        await bot.send_message(
+            dest.chat_id,
+            intro,
+            message_thread_id=dest.message_thread_id,
+        )
+    labels = option_labels(choices)
+    poll_options: list[InputPollOption | str] = list(labels)
+    message = await bot.send_poll(
         chat_id=dest.chat_id,
-        question=meeting_poll_question(title),
+        question=meeting_date_runoff_question() if runoff else meeting_poll_question(title),
         options=poll_options,
         is_anonymous=False,
-        allows_multiple_answers=True,
-        allow_adding_options=True,
+        allows_multiple_answers=not runoff,
+        allow_adding_options=not runoff,
         message_thread_id=dest.message_thread_id,
     )
+    poll = message.poll
+    if poll is None:
+        return None
+    return PublishedMeetingPoll(
+        chat_id=dest.chat_id,
+        message_id=message.message_id,
+        telegram_poll_id=poll.id,
+        option_dates=option_date_isos(choices),
+    )
+
+
+async def stop_meeting_polls(
+    bot: Bot,
+    polls: list[MeetingPoll],
+) -> list[tuple[MeetingPoll, list[PollOption]]]:
+    stopped: list[tuple[MeetingPoll, list[PollOption]]] = []
+    for poll in polls:
+        result = await bot.stop_poll(chat_id=poll.chat_id, message_id=poll.message_id)
+        stopped.append((poll, list(result.options)))
+    return stopped
