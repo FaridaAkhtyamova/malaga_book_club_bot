@@ -110,6 +110,12 @@ COMMANDS: tuple[CommandInfo, ...] = (
         "/cycle_status — группа, топик, дни, месяц и сколько книг уже предложено",
         admin=True,
     ),
+    CommandInfo(
+        "month_book",
+        "Книга месяца",
+        "/month_book — выбранная книга месяца (победитель голосования)",
+        admin=True,
+    ),
 )
 
 

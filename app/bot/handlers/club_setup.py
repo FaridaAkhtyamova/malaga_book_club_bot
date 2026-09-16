@@ -25,6 +25,7 @@ from app.services.cycle_service import (
     MeetingPollsAlreadyOpenError,
     NoOpenMeetingPollsError,
     NoOpenPollsError,
+    NoWinnerError,
     NotEnoughBooksError,
     VotePollsAlreadyOpenError,
     chunk_books_for_polls,
@@ -413,6 +414,23 @@ async def cmd_cycle_status(message: Message, session: AsyncSession) -> None:
             lines.append(f"Дата встречи: {format_meeting_day(cycle.winner_meeting_date)}")
 
     await message.answer("\n".join(lines))
+
+
+@router.message(Command("month_book"), AdminFilter())
+async def cmd_month_book(message: Message, session: AsyncSession) -> None:
+    service = CycleService(session)
+    try:
+        cycle = await service.get_selected_cycle()
+    except NoWinnerError as exc:
+        await message.answer(str(exc))
+        return
+
+    book = cycle.winner
+    if book is None:
+        await message.answer("Сначала закройте голосование за книгу командой /close_vote.")
+        return
+
+    await message.answer(winner_announcement(cycle, book))
 
 
 async def _finish_meeting_poll(

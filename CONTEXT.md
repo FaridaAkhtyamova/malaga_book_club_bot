@@ -52,7 +52,7 @@ book_club_bot/
 - `/start` registers the user; `/start suggest` opens the DM suggest flow; `/help` lists commands
 - Group: `#выбор_книги Title, 500` plus optional description on the next lines
 - DM: `/suggest` → Google Books, then Open Library; manual add; confirm before posting the card to the group/topic
-- Admin: `/set_group`, `/set_suggest_topic`, `/set_suggest_day`, `/set_vote_day`, `/open_suggestions`, `/start_vote`, `/close_vote`, `/start_meeting_poll`, `/close_meeting_poll`, `/create_meeting`, `/cycle_status`
+- Admin: `/set_group`, `/set_suggest_topic`, `/set_suggest_day`, `/set_vote_day`, `/open_suggestions`, `/start_vote`, `/close_vote`, `/start_meeting_poll`, `/close_meeting_poll`, `/create_meeting`, `/cycle_status`, `/month_book`
 - `/close_vote` with a single winner also publishes the meeting-date poll; `/start_meeting_poll` works without a closed book vote and asks the admin for a title if none is stored
 - `/create_meeting` uses the poll-chosen meeting date when it exists; otherwise the admin types the date (`25.09` / `25.09.2026`). If there is no winner book, the admin types the title before the time
 - Polls: `is_anonymous=False`; max 10 options; remainder of 1 is split as 9+2; first round allows multiple answers
