@@ -5,36 +5,29 @@ alwaysApply: true
 
 # Malaga Book Club Bot
 
-Production-ready async Telegram bot (portfolio: Clean Architecture, async-first, strict typing).
-
-Full context: `CONTEXT.md`.
+Async Telegram bot (portfolio: layered architecture, async-first, strict typing). Operator docs: `README.md`. Full map: `CONTEXT.md`.
 
 ## Stack
 
 - Python 3.12+, `mypy`, `ruff`
 - aiogram 3.x, PostgreSQL 16, SQLAlchemy 2.0 + `asyncpg`, Alembic (async)
 - Pydantic v2, `pydantic-settings`, `httpx`, APScheduler
-- Docker Compose: Postgres `5432`, Redis `6379` (`book_club_db`, `book_club_redis`)
+- Docker Compose: Postgres `5432` (`book_club_db`) + bot (`book_club_bot`)
 
 ## Layers
 
 Handlers → Services → Repositories → Models
 
-- `app/bot/handlers/` — routers, FSM, commands (`base`, `books`/`suggest`, `club_setup`, `cycle_open`, `admin`)
-- `app/bot/middlewares/` — e.g. `DbSessionMiddleware` injects `AsyncSession`
-- `app/bot/keyboards/` — inline keyboards for Google Books results and DM deep link
-- `app/services/` — `GoogleBooksService`, `CycleService`, `DestinationService`, scheduler
-- `app/repositories/` — async CRUD
-- `app/db/models.py` — `User`, `Book`, `ClubSettings`, `SuggestionCycle`, `Suggestion` (+ unused `Meeting`/`Vote`/`RSVP`)
-- `app/schemas/` — Pydantic DTOs
-- `main.py` — polling + APScheduler
+- `app/bot/handlers/` — `base`, `books` (DM `/suggest`), `group_suggest` (`#выбор_книги`), `club_setup`, `cycle_open`, `meeting`, `admin` (schedule days)
+- `app/bot/middlewares/` — `DbSessionMiddleware` injects `AsyncSession`
+- `app/bot/club_publish.py` — announcements, polls, calendar invite
+- `app/services/` — catalog, cycle, destination, `club_scheduler`, meeting invite
+- `app/db/models.py` — `User`, `Book`, `ClubSettings`, `SuggestionCycle`, `Suggestion`, `VotePoll`, `MeetingPoll` (+ unused `Meeting`/`Vote`/`RSVP`)
+- `main.py` — polling + FSM `MemoryStorage` + scheduler
 
 ## Status
 
-- Docker and Alembic migrations (`Initial tables`, `suggestion_cycles`, `suggest_topic_id`)
-- `/start` registers/fetches the user; `/start suggest` opens DM suggestions
-- Cycle: scheduled/manual open for **next** month → `/suggest` in group topic or DM → Google Books card → non-anonymous polls (chunks of 10)
-
-## Next feature
-
-Optional: announce poll winner, meetings/RSVP around the chosen book.
+- Alembic: initial tables → suggestion cycles → suggest topic → vote/meeting polls + winner fields
+- Cycle: open next month → hashtag in group or `/suggest` in DM → `/start_vote` → `/close_vote` (runoff on tie; meeting-date poll on a single winner) → `/close_meeting_poll` → `/create_meeting` (`.ics`)
+- Scheduler opens suggestions and starts book polls; it does not close them
+- `DEBUG=true` allows reopening the same month
