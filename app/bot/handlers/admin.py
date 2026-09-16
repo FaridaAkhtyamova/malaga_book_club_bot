@@ -7,9 +7,10 @@ from app.bot.filters.admin_filter import AdminFilter
 from app.services.cycle_service import CycleService, InvalidDayError
 
 router = Router()
+router.message.filter(AdminFilter())
 
 
-@router.message(Command("set_suggest_day"), AdminFilter())
+@router.message(Command("set_suggest_day"))
 async def cmd_set_suggest_day(
     message: Message,
     command: CommandObject,
@@ -30,7 +31,7 @@ async def cmd_set_suggest_day(
     await message.answer(f"День открытия предложений: {settings.suggest_day}.")
 
 
-@router.message(Command("set_vote_day"), AdminFilter())
+@router.message(Command("set_vote_day"))
 async def cmd_set_vote_day(
     message: Message,
     command: CommandObject,

@@ -135,6 +135,10 @@ def admin_bot_commands() -> list[BotCommand]:
     return _menu_commands(admin=None)
 
 
+def admin_command_names() -> tuple[str, ...]:
+    return tuple(item.command for item in COMMANDS if item.admin)
+
+
 def format_help(*, is_admin: bool) -> str:
     lines = ["Команды для всех:", ""]
     lines.extend(item.help_line for item in COMMANDS if not item.admin)

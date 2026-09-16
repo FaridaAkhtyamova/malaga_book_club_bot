@@ -4,13 +4,15 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.commands import format_help
+from app.bot.commands import admin_command_names, format_help
 from app.bot.handlers.books import begin_suggest
 from app.bot.keyboards.suggest import SUGGEST_START_PAYLOAD
 from app.core.config import get_settings
 from app.repositories.user_repo import UserRepository
 
 router = Router()
+
+_ADMIN_ONLY = "Эта команда доступна только админу клуба."
 
 
 @router.message(Command("start"))
@@ -57,3 +59,8 @@ async def cmd_help(message: Message) -> None:
     user = message.from_user
     is_admin = user is not None and user.id in get_settings().admin_ids
     await message.answer(format_help(is_admin=is_admin))
+
+
+@router.message(Command(*admin_command_names()))
+async def cmd_admin_only(message: Message) -> None:
+    await message.answer(_ADMIN_ONLY)

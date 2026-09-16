@@ -5,12 +5,13 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.club_publish import publish_club_announcement
-from app.core.config import get_settings
+from app.bot.filters.admin_filter import AdminFilter
 from app.services.club_destination import DestinationService, suggestion_announcement_text
 from app.services.cycle_open import CycleOpenService
 from app.services.cycle_service import CycleAlreadyOpenError, GroupNotSetError, month_name_ru
 
 router = Router()
+router.message.filter(AdminFilter())
 
 
 @router.message(Command("open_suggestions"))
@@ -19,10 +20,6 @@ async def cmd_open_suggestions(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    if message.from_user is None or message.from_user.id not in get_settings().admin_ids:
-        await message.answer("Эта команда доступна только админу клуба.")
-        return
-
     try:
         cycle, _, should_announce = await CycleOpenService(session).open_or_reopen()
         dest = await DestinationService(session).get_destination()

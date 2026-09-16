@@ -46,6 +46,7 @@ from app.services.meeting_poll import (
 from app.services.vote_close import VoteCounts, winner_announcement
 
 router = Router()
+router.message.filter(AdminFilter())
 
 _CLEAR_TOPIC = frozenset({"clear", "off", "none", "сброс"})
 _MEETING_POLL_STATES = StateFilter(MeetingPollStates)
@@ -53,7 +54,7 @@ _ASK_POLL_TITLE = "Книга ещё не выбрана. Напишите на�
 _POLL_CANCELLED = "Запуск опроса дат отменён."
 
 
-@router.message(Command("set_group"), AdminFilter())
+@router.message(Command("set_group"))
 async def cmd_set_group(message: Message, session: AsyncSession) -> None:
     if message.chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
         await message.answer("Эту команду нужно вызвать в группе клуба.")
@@ -69,7 +70,7 @@ async def cmd_set_group(message: Message, session: AsyncSession) -> None:
     )
 
 
-@router.message(Command("set_suggest_topic"), AdminFilter())
+@router.message(Command("set_suggest_topic"))
 async def cmd_set_suggest_topic(
     message: Message,
     command: CommandObject,
@@ -105,7 +106,7 @@ async def cmd_set_suggest_topic(
     await message.answer(f"Топик предложений привязан (id {settings.suggest_topic_id}).")
 
 
-@router.message(Command("start_vote"), AdminFilter())
+@router.message(Command("start_vote"))
 async def cmd_start_vote(
     message: Message,
     session: AsyncSession,
@@ -144,7 +145,7 @@ async def cmd_start_vote(
         await message.answer("Опросы опубликованы в группе.")
 
 
-@router.message(Command("close_vote"), AdminFilter())
+@router.message(Command("close_vote"))
 async def cmd_close_vote(
     message: Message,
     session: AsyncSession,
@@ -229,7 +230,7 @@ async def cmd_close_vote(
         await message.answer("Ничья. Второй тур опубликован в группе.")
 
 
-@router.message(Command("start_meeting_poll"), AdminFilter())
+@router.message(Command("start_meeting_poll"))
 async def cmd_start_meeting_poll(
     message: Message,
     session: AsyncSession,
@@ -268,7 +269,6 @@ async def cmd_cancel_meeting_poll(message: Message, state: FSMContext) -> None:
     MeetingPollStates.waiting_title,
     F.text,
     ~F.text.startswith("/"),
-    AdminFilter(),
 )
 async def on_meeting_poll_title(
     message: Message,
@@ -300,7 +300,7 @@ async def on_meeting_poll_title(
     await _finish_meeting_poll(message, bot, dest, service, cycle, meeting_subject(cycle, book))
 
 
-@router.message(Command("close_meeting_poll"), AdminFilter())
+@router.message(Command("close_meeting_poll"))
 async def cmd_close_meeting_poll(
     message: Message,
     session: AsyncSession,
@@ -382,7 +382,7 @@ async def cmd_close_meeting_poll(
         await message.answer("Ничья. Второй тур по датам опубликован в группе.")
 
 
-@router.message(Command("cycle_status"), AdminFilter())
+@router.message(Command("cycle_status"))
 async def cmd_cycle_status(message: Message, session: AsyncSession) -> None:
     service = CycleService(session)
     settings = await service.get_settings()
@@ -419,7 +419,7 @@ async def cmd_cycle_status(message: Message, session: AsyncSession) -> None:
     await message.answer("\n".join(lines))
 
 
-@router.message(Command("month_book"), AdminFilter())
+@router.message(Command("month_book"))
 async def cmd_month_book(message: Message, session: AsyncSession) -> None:
     service = CycleService(session)
     try:

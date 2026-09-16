@@ -25,6 +25,7 @@ from app.services.meeting_invite import (
 from app.services.meeting_poll import format_meeting_day
 
 router = Router()
+router.message.filter(AdminFilter())
 
 _MEETING_STATES = StateFilter(MeetingInviteStates)
 _ASK_DATE = "Дата встречи ещё не выбрана. Напишите её как 25.09 или 25.09.2026."
@@ -88,7 +89,7 @@ async def _prompt_meeting_step(
     await message.answer(_ask_time(meeting_day, book_title))
 
 
-@router.message(Command("create_meeting"), AdminFilter())
+@router.message(Command("create_meeting"))
 async def cmd_create_meeting(
     message: Message,
     session: AsyncSession,
@@ -109,7 +110,7 @@ async def cmd_cancel_meeting(message: Message, state: FSMContext) -> None:
     await message.answer(_CANCELLED)
 
 
-@router.message(MeetingInviteStates.waiting_date, F.text, AdminFilter())
+@router.message(MeetingInviteStates.waiting_date, F.text)
 async def on_meeting_date(
     message: Message,
     session: AsyncSession,
@@ -139,7 +140,7 @@ async def on_meeting_date(
     await _prompt_meeting_step(message, state, meeting_day=meeting_day, book_title=book_title)
 
 
-@router.message(MeetingInviteStates.waiting_title, F.text, AdminFilter())
+@router.message(MeetingInviteStates.waiting_title, F.text)
 async def on_meeting_title(
     message: Message,
     session: AsyncSession,
@@ -157,7 +158,7 @@ async def on_meeting_title(
     await _prompt_meeting_step(message, state, meeting_day=meeting_day, book_title=title)
 
 
-@router.message(MeetingInviteStates.waiting_time, F.text, AdminFilter())
+@router.message(MeetingInviteStates.waiting_time, F.text)
 async def on_meeting_time(
     message: Message,
     session: AsyncSession,
