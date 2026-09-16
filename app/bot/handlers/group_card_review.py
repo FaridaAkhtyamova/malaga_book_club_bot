@@ -224,7 +224,7 @@ async def _ensure_cover(
     if card.cover_url:
         return
     try:
-        copied = await bot.copy_message(
+        copied = await bot.forward_message(
             chat_id=admin_id,
             from_chat_id=card.chat_id,
             message_id=card.message_id,
@@ -232,8 +232,10 @@ async def _ensure_cover(
     except TelegramAPIError:
         return
     file_id = cover_file_id(copied)
-    with suppress(TelegramAPIError):
-        await bot.delete_message(copied.chat.id, copied.message_id)
+    copied_id = getattr(copied, "message_id", None)
+    if isinstance(copied_id, int):
+        with suppress(TelegramAPIError):
+            await bot.delete_message(admin_id, copied_id)
     if file_id:
         await service.set_cover(card.id, file_id)
 
