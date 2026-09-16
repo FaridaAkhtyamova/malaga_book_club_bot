@@ -24,7 +24,7 @@ from app.services.meeting_poll import (
 from app.services.vote_close import add_poll_votes, runoff_intro_text, runoff_question
 
 _POLL_INTRO = (
-    "Голосуем за книгу месяца. Можно выбрать несколько вариантов. "
+    "🗳️ Голосуем за книгу месяца. Можно выбрать несколько вариантов. "
     "Опросы неанонимные. Когда время вышло, админ закрывает голосование."
 )
 

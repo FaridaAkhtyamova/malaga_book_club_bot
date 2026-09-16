@@ -38,15 +38,15 @@ def add_poll_votes(
 def winner_announcement(cycle: SuggestionCycle, book: Book) -> str:
     month = month_name_ru(cycle.target_month)
     authors = book.authors or "автор не указан"
-    return f"Книга на {month}: «{book.title}»\n{authors}"
+    return f"🏆 Книга на {month}: «{book.title}»\n{authors}"
 
 
 def runoff_intro_text() -> str:
     return (
-        "Ничья. Голосуем ещё раз — только книги с одинаковым числом голосов. "
+        "🔁 Ничья. Голосуем ещё раз — только книги с одинаковым числом голосов. "
         "Опрос неанонимный, один вариант."
     )
 
 
 def runoff_question(month: int) -> str:
-    return f"Книга на {month_name_ru(month)} — второй тур"
+    return f"🗳️ Книга на {month_name_ru(month)} — второй тур"

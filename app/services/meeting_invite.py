@@ -174,7 +174,7 @@ def _invite_caption(title: str, start: datetime, end: datetime) -> str:
     month = MONTH_GENITIVE_RU[local_start.month]
     when = f"{local_start.day} {month} {local_start.year}, {local_start:%H:%M}–{local_end:%H:%M}"
     return (
-        f"{title}\n{when} (Малага)\n\n"
+        f"🗓️ {title}\n{when} (Малага)\n\n"
         "Откройте файл .ics, чтобы добавить встречу в календарь."
     )
 

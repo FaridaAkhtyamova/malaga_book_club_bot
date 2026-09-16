@@ -72,7 +72,7 @@ def meeting_subject(cycle: SuggestionCycle, book: Book | None = None) -> str:
 
 
 def meeting_poll_question(title: str) -> str:
-    prefix = "Когда встречаемся по «"
+    prefix = "📅 Когда встречаемся по «"
     suffix = "»?"
     budget = POLL_QUESTION_LIMIT - len(prefix) - len(suffix)
     if len(title) > budget:
@@ -82,7 +82,7 @@ def meeting_poll_question(title: str) -> str:
 
 def meeting_poll_intro(title: str) -> str:
     return (
-        f"Голосуем за дату встречи по «{title}». "
+        f"📅 Голосуем за дату встречи по «{title}». "
         "Можно выбрать несколько дней, отметить «не прочитала» или «пропущу», "
         "и добавить свой вариант. Опрос неанонимный."
     )
@@ -90,13 +90,13 @@ def meeting_poll_intro(title: str) -> str:
 
 def meeting_date_runoff_intro() -> str:
     return (
-        "Ничья. Голосуем ещё раз — только дни с одинаковым числом голосов. "
+        "🔁 Ничья. Голосуем ещё раз — только дни с одинаковым числом голосов. "
         "Опрос неанонимный, один вариант."
     )
 
 
 def meeting_date_runoff_question() -> str:
-    return "Дата встречи — второй тур"
+    return "📅 Дата встречи — второй тур"
 
 
 def meeting_poll_options(now: datetime | None = None) -> list[MeetingDateOption]:
@@ -224,7 +224,7 @@ def meeting_date_announcement(
         if book is None
         else "Дальше /create_meeting — укажите время."
     )
-    return f"Встреча по «{title}»: {format_meeting_day(day)}.\n{next_step}"
+    return f"📅 Встреча по «{title}»: {format_meeting_day(day)}.\n{next_step}"
 
 
 def _localized_today(now: datetime | None) -> date:

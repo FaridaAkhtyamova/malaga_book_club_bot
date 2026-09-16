@@ -25,7 +25,7 @@ def format_group_card(book: Book, suggester: User) -> str:
     )
     who = _suggester_label(suggester)
     header = (
-        f"{HASHTAG}\n<b>{title}</b>\n{authors}\n{html.escape(pages)}\nПредложил(а): {who}"
+        f"📖 {HASHTAG}\n<b>{title}</b>\n{authors}\n{html.escape(pages)}\nПредложил(а): {who}"
     )
     description = _HTML_TAG_RE.sub("", book.description or "").strip()
     if not description:

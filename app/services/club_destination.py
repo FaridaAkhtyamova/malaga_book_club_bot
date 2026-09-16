@@ -52,7 +52,7 @@ class DestinationService:
 
 def suggestion_announcement_text(month: int) -> str:
     return (
-        f"Дорогой клуб, начинаем предлагать книги на {month_name_ru(month)}.\n\n"
+        f"📚 Дорогой клуб, начинаем предлагать книги на {month_name_ru(month)}.\n\n"
         "В группе запостите карточку:\n"
         "#выбор_книги Название книги, 500\n"
         "Краткое описание книги\n\n"

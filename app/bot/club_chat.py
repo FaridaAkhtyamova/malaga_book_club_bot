@@ -28,7 +28,7 @@ def forum_topic_url(chat_id: int, thread_id: int) -> str | None:
 
 def wrong_topic_text(settings: ClubSettings) -> str:
     lines = [
-        "В группе предлагать книги нужно в топике клуба: карточка с #выбор_книги.",
+        "📖 В группе предлагать книги нужно в топике клуба: карточка с #выбор_книги.",
         "Поиск по каталогу — в личке: /suggest",
     ]
     if settings.group_chat_id is not None and settings.suggest_topic_id is not None:

@@ -402,12 +402,12 @@ def month_name_ru(month: int) -> str:
 
 
 def announcement_text(month: int) -> str:
-    return f"Дорогой клуб, начинаем предлагать книги на {month_name_ru(month)}."
+    return f"📚 Дорогой клуб, начинаем предлагать книги на {month_name_ru(month)}."
 
 
 def poll_intro_text() -> str:
     return (
-        "Голосуем за книгу месяца. Опросы неанонимные. "
+        "🗳️ Голосуем за книгу месяца. Опросы неанонимные. "
         "Если опросов несколько, можно проголосовать в каждом."
     )
 
@@ -415,8 +415,8 @@ def poll_intro_text() -> str:
 def poll_question(month: int, index: int, total: int) -> str:
     name = month_name_ru(month)
     if total == 1:
-        return f"Книга на {name}"
-    return f"Книга на {name} ({index}/{total})"
+        return f"🗳️ Книга на {name}"
+    return f"🗳️ Книга на {name} ({index}/{total})"
 
 
 def format_poll_option(book: Book, used: set[str]) -> str:
