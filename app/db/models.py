@@ -130,6 +130,9 @@ class SuggestionCycle(Base):
     suggestions: Mapped[list["Suggestion"]] = relationship(
         back_populates="cycle", cascade="all, delete-orphan"
     )
+    pending_group_cards: Mapped[list["PendingGroupCard"]] = relationship(
+        back_populates="cycle", cascade="all, delete-orphan"
+    )
     vote_polls: Mapped[list["VotePoll"]] = relationship(
         back_populates="cycle", cascade="all, delete-orphan"
     )
@@ -170,6 +173,38 @@ class MeetingPoll(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     cycle: Mapped[SuggestionCycle] = relationship(back_populates="meeting_polls")
+
+
+class PendingGroupCard(Base):
+    __tablename__ = "pending_group_cards"
+    __table_args__ = (
+        UniqueConstraint(
+            "cycle_id",
+            "chat_id",
+            "message_id",
+            name="uq_pending_group_card_message",
+        ),
+    )
+
+    STATUS_PENDING = "pending"
+    STATUS_APPROVED = "approved"
+    STATUS_REJECTED = "rejected"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    cycle_id: Mapped[int] = mapped_column(ForeignKey("suggestion_cycles.id"), nullable=False)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    raw_text: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    authors: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    description: Mapped[str | None] = mapped_column(String, nullable=True)
+    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default=STATUS_PENDING, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    cycle: Mapped[SuggestionCycle] = relationship(back_populates="pending_group_cards")
+    user: Mapped[User] = relationship()
 
 
 class Suggestion(Base):

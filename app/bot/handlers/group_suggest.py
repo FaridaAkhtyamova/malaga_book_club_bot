@@ -7,16 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.club_chat import resolve_suggest_access
 from app.repositories.user_repo import UserRepository
 from app.services.cycle_service import CycleNotOpenError, CycleService
-from app.services.hashtag_suggest import GROUP_HINT, HASHTAG, parse_hashtag_suggestion
-from app.services.manual_book import ManualBookService
+from app.services.hashtag_suggest import GROUP_HINT, parse_hashtag_suggestion
+from app.services.pending_group_card import PendingGroupCardService
 
 router = Router()
 
+_HASHTAG_FILTER = F.text.regexp(r"(?i)#выбор_книги") | F.caption.regexp(r"(?i)#выбор_книги")
+_QUEUED = "Карточка уйдёт админу перед голосованием."
 
-@router.message(
-    F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}),
-    F.text.regexp(r"(?i)#выбор_книги"),
-)
+
+@router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), _HASHTAG_FILTER)
+@router.edited_message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), _HASHTAG_FILTER)
 async def on_hashtag_suggestion(
     message: Message,
     session: AsyncSession,
@@ -38,15 +39,8 @@ async def on_hashtag_suggestion(
             await message.reply(access.error)
         return
 
-    parsed = parse_hashtag_suggestion(message.text or "")
-    if parsed is None:
-        await message.reply(
-            "Нужны название и число страниц, например:\n"
-            f"{HASHTAG} Имя Розы, 500\n"
-            "Краткое описание книги"
-        )
-        return
-
+    raw_text = message.text or message.caption or ""
+    parsed = parse_hashtag_suggestion(raw_text)
     user_repo = UserRepository(session)
     user = await user_repo.get_or_create_user(
         telegram_id=message.from_user.id,
@@ -54,22 +48,19 @@ async def on_hashtag_suggestion(
         full_name=message.from_user.full_name,
     )
     try:
-        _, created = await ManualBookService(session).add(
+        _, created = await PendingGroupCardService(session).upsert_from_post(
             user,
-            title=parsed.title,
-            authors=None,
-            description=parsed.description,
-            page_count=parsed.page_count,
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+            raw_text=raw_text,
+            parsed=parsed,
         )
     except CycleNotOpenError:
         await message.reply("Предложения ещё не открыты.")
         return
 
-    if not created:
-        await message.reply("Эта книга уже в списке на голосование.")
-        return
-
-    await message.reply("Книга добавлена в список на голосование.")
+    if created:
+        await message.reply(_QUEUED)
 
 
 @router.message(Command("suggest"), F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}))

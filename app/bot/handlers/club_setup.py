@@ -11,6 +11,7 @@ from app.bot.club_publish import (
     publish_meeting_poll,
     publish_vote_polls,
     publish_winner_announcement,
+    send_pending_card_reviews,
     stop_meeting_polls,
     stop_vote_polls,
 )
@@ -28,6 +29,7 @@ from app.services.cycle_service import (
     NoOpenPollsError,
     NoWinnerError,
     NotEnoughBooksError,
+    PendingGroupCardsNeedReviewError,
     VotePollsAlreadyOpenError,
     chunk_books_for_polls,
     month_name_ru,
@@ -125,6 +127,10 @@ async def cmd_start_vote(
         return
     except VotePollsAlreadyOpenError as exc:
         await message.answer(str(exc))
+        return
+    except PendingGroupCardsNeedReviewError as exc:
+        await send_pending_card_reviews(bot, exc.cards)
+        await message.answer("Сначала проверьте карточки из группы в личке.")
         return
     except NotEnoughBooksError as exc:
         await message.answer(str(exc))
@@ -409,6 +415,9 @@ async def cmd_cycle_status(message: Message, session: AsyncSession) -> None:
         count = await service.count_suggestions(cycle.id)
         month = month_name_ru(cycle.target_month)
         lines.append(f"Цикл: {month} {cycle.target_year}, статус {cycle.status}, книг: {count}")
+        pending = await service.count_pending_group_cards(cycle.id)
+        if pending:
+            lines.append(f"Карточек на проверке: {pending}")
         if cycle.winner_book_id is not None:
             chosen = await service.books_by_ids([cycle.winner_book_id])
             if chosen:

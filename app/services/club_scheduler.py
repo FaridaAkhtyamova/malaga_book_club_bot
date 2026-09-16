@@ -5,7 +5,11 @@ from zoneinfo import ZoneInfo
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from app.bot.club_publish import publish_club_announcement, publish_vote_polls
+from app.bot.club_publish import (
+    publish_club_announcement,
+    publish_vote_polls,
+    send_pending_card_reviews,
+)
 from app.core.config import get_settings
 from app.core.db import AsyncSessionLocal
 from app.services.club_destination import DestinationService, suggestion_announcement_text
@@ -13,6 +17,7 @@ from app.services.cycle_service import (
     MONTH_NAMES_RU,
     CycleService,
     ScheduledAnnounce,
+    ScheduledPendingReview,
     ScheduledVote,
 )
 
@@ -52,6 +57,8 @@ async def run_scheduled_jobs(bot: Bot) -> None:
             if isinstance(action, ScheduledAnnounce):
                 text = _announcement_from_scheduled(action.text)
                 await publish_club_announcement(bot, dest, text)
+            elif isinstance(action, ScheduledPendingReview):
+                await send_pending_card_reviews(bot, action.cards)
             elif isinstance(action, ScheduledVote):
                 published = await publish_vote_polls(bot, dest, action.cycle, action.chunks)
                 await service.record_vote_polls(action.cycle, published)

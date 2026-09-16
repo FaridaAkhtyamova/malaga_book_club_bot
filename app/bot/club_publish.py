@@ -2,9 +2,10 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputPollOption, Message, PollOption
 
+from app.bot.keyboards.pending_card import pending_card_keyboard
 from app.bot.keyboards.suggest import suggest_dm_keyboard
 from app.core.config import get_settings
-from app.db.models import Book, MeetingPoll, SuggestionCycle, VotePoll
+from app.db.models import Book, MeetingPoll, PendingGroupCard, SuggestionCycle, VotePoll
 from app.services.club_destination import ClubDestination
 from app.services.cycle_service import (
     PublishedMeetingPoll,
@@ -22,6 +23,7 @@ from app.services.meeting_poll import (
     option_date_isos,
     option_labels,
 )
+from app.services.pending_group_card import format_card_preview
 from app.services.vote_close import add_poll_votes, runoff_intro_text, runoff_question
 
 _POLL_INTRO = (
@@ -125,6 +127,43 @@ async def notify_admins(bot: Bot, text: str) -> None:
             await bot.send_message(admin_id, text)
         except TelegramAPIError:
             continue
+
+
+_PENDING_INTRO = (
+    "Перед голосованием проверьте карточки из группы. "
+    "Опросы не опубликуются, пока очередь не разберут."
+)
+
+
+async def send_pending_card_reviews(bot: Bot, cards: list[PendingGroupCard]) -> None:
+    if not cards:
+        return
+    for admin_id in get_settings().admin_ids:
+        try:
+            await bot.send_message(admin_id, _PENDING_INTRO)
+        except TelegramAPIError:
+            continue
+        for card in cards:
+            await _send_pending_card(bot, admin_id, card)
+
+
+async def _send_pending_card(bot: Bot, admin_id: int, card: PendingGroupCard) -> None:
+    try:
+        await bot.forward_message(
+            chat_id=admin_id,
+            from_chat_id=card.chat_id,
+            message_id=card.message_id,
+        )
+    except TelegramAPIError:
+        pass
+    try:
+        await bot.send_message(
+            admin_id,
+            format_card_preview(card),
+            reply_markup=pending_card_keyboard(card.id),
+        )
+    except TelegramAPIError:
+        return
 
 
 async def publish_meeting_invite(bot: Bot, dest: ClubDestination, invite: MeetingInvite) -> None:

@@ -10,11 +10,20 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.db.models import Book, ClubSettings, MeetingPoll, SuggestionCycle, User, VotePoll
+from app.db.models import (
+    Book,
+    ClubSettings,
+    MeetingPoll,
+    PendingGroupCard,
+    SuggestionCycle,
+    User,
+    VotePoll,
+)
 from app.repositories.book_repo import BookRepository
 from app.repositories.cycle_repo import CycleRepository
 from app.repositories.cycle_vote_repo import CycleVoteRepository
 from app.repositories.meeting_poll_repo import MeetingPollRepository
+from app.repositories.pending_group_card_repo import PendingGroupCardRepository
 from app.repositories.settings_repo import SettingsRepository
 from app.repositories.suggestion_repo import SuggestionRepository
 from app.repositories.vote_poll_repo import VotePollRepository
@@ -78,6 +87,14 @@ class VotePollsAlreadyOpenError(CycleServiceError):
     """This cycle already has live Telegram polls."""
 
 
+class PendingGroupCardsNeedReviewError(CycleServiceError):
+    """Manual group cards must be reviewed before the book poll."""
+
+    def __init__(self, cards: list[PendingGroupCard]) -> None:
+        super().__init__("Сначала проверьте карточки из группы в личке.")
+        self.cards = cards
+
+
 class NoWinnerError(CycleServiceError):
     """The latest vote has not produced a winning book yet."""
 
@@ -99,6 +116,11 @@ class ScheduledAnnounce:
 class ScheduledVote:
     cycle: SuggestionCycle
     chunks: list[list[Book]]
+
+
+@dataclass(frozen=True, slots=True)
+class ScheduledPendingReview:
+    cards: list[PendingGroupCard]
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +149,7 @@ class CycleService:
         self.book_repo = BookRepository(session)
         self.vote_poll_repo = VotePollRepository(session)
         self.meeting_poll_repo = MeetingPollRepository(session)
+        self.pending_card_repo = PendingGroupCardRepository(session)
 
     async def get_settings(self) -> ClubSettings:
         return await self.settings_repo.get_or_create()
@@ -164,6 +187,9 @@ class CycleService:
 
     async def count_suggestions(self, cycle_id: int) -> int:
         return await self.suggestion_repo.count(cycle_id)
+
+    async def count_pending_group_cards(self, cycle_id: int) -> int:
+        return await self.pending_card_repo.count_pending(cycle_id)
 
     async def open_suggestions_for_next_month(
         self,
@@ -211,6 +237,10 @@ class CycleService:
                 raise VotePollsAlreadyOpenError(
                     "Опросы уже идут. Когда время вышло, закройте их командой /close_vote."
                 )
+
+        pending = await self.pending_card_repo.list_pending(cycle.id)
+        if pending:
+            raise PendingGroupCardsNeedReviewError(pending)
 
         books = await self.suggestion_repo.list_books(cycle.id)
         chunks = chunk_books_for_polls(books)
@@ -355,7 +385,9 @@ class CycleService:
     async def books_by_ids(self, ids: Sequence[int]) -> list[Book]:
         return await self.book_repo.get_by_ids(ids)
 
-    async def run_scheduled(self, now: datetime) -> ScheduledAnnounce | ScheduledVote | None:
+    async def run_scheduled(
+        self, now: datetime
+    ) -> ScheduledAnnounce | ScheduledVote | ScheduledPendingReview | None:
         settings = await self.settings_repo.get_or_create()
         if settings.group_chat_id is None:
             return None
@@ -378,6 +410,10 @@ class CycleService:
                     vote_cycle, chunks = await self.prepare_vote()
                 except NotEnoughBooksError:
                     return None
+                except PendingGroupCardsNeedReviewError as exc:
+                    if current.hour != settings.announce_hour:
+                        return None
+                    return ScheduledPendingReview(cards=exc.cards)
                 return ScheduledVote(cycle=vote_cycle, chunks=chunks)
 
         return None

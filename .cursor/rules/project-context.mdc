@@ -18,16 +18,16 @@ Async Telegram bot (portfolio: layered architecture, async-first, strict typing)
 
 Handlers → Services → Repositories → Models
 
-- `app/bot/handlers/` — `base`, `books` (DM `/suggest`), `group_suggest` (`#выбор_книги`), `club_setup`, `cycle_open`, `meeting`, `admin` (schedule days)
+- `app/bot/handlers/` — `base`, `books` (DM `/suggest`), `group_suggest`, `group_card_review`, `club_setup`, `cycle_open`, `meeting`, `admin` (schedule days)
 - `app/bot/middlewares/` — `DbSessionMiddleware` injects `AsyncSession`
 - `app/bot/club_publish.py` — announcements, polls, calendar invite
 - `app/services/` — catalog, cycle, destination, `club_scheduler`, meeting invite
-- `app/db/models.py` — `User`, `Book`, `ClubSettings`, `SuggestionCycle`, `Suggestion`, `VotePoll`, `MeetingPoll` (+ unused `Meeting`/`Vote`/`RSVP`)
+- `app/db/models.py` — `User`, `Book`, `ClubSettings`, `SuggestionCycle`, `Suggestion`, `PendingGroupCard`, `VotePoll`, `MeetingPoll` (+ unused `Meeting`/`Vote`/`RSVP`)
 - `main.py` — polling + FSM `MemoryStorage` + scheduler
 
 ## Status
 
-- Alembic: initial tables → suggestion cycles → suggest topic → vote/meeting polls + winner fields
-- Cycle: open next month → hashtag in group or `/suggest` in DM → `/start_vote` → `/close_vote` (runoff on tie; meeting-date poll on a single winner) → `/close_meeting_poll` → `/create_meeting` (`.ics`; date can be typed if there was no poll)
-- Scheduler opens suggestions and starts book polls; it does not close them
+- Alembic: initial tables → suggestion cycles → suggest topic → vote/meeting polls + winner fields → pending group cards
+- Cycle: open next month → hashtag in group (admin review before poll) or `/suggest` in DM → `/start_vote` → `/close_vote` (runoff on tie; meeting-date poll on a single winner) → `/close_meeting_poll` → `/create_meeting` (`.ics`; date can be typed if there was no poll)
+- Scheduler opens suggestions and starts book polls (pauses if group cards await review); it does not close them
 - `DEBUG=true` allows reopening the same month

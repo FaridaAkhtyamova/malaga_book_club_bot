@@ -7,10 +7,10 @@ from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefaul
 from app.core.config import get_settings
 
 _HASHTAG_HINT = (
-    "В группе, пока сбор открыт, можно запостить карточку:\n"
+    "В группе, пока сбор открыт, можно запостить карточку с #выбор_книги. "
+    "Перед голосованием админ проверит её в личке.\n"
     "#выбор_книги Название книги, 500\n"
-    "Краткое описание книги\n"
-    "где 500 — количество страниц."
+    "Краткое описание книги"
 )
 
 
@@ -38,7 +38,7 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "cancel",
         "Отменить текущий ввод",
-        "/cancel — отменить поиск, опрос дат или создание встречи",
+        "/cancel — отменить поиск, проверку карточки, опрос дат или создание встречи",
     ),
     CommandInfo(
         "set_group",
@@ -74,7 +74,7 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "start_vote",
         "Закрыть сбор и опубликовать опросы",
-        "/start_vote — закрыть сбор и опубликовать голосовалки",
+        "/start_vote — проверить ручные карточки и опубликовать голосовалки",
         admin=True,
     ),
     CommandInfo(

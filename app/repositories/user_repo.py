@@ -8,6 +8,10 @@ class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def get_by_id(self, telegram_id: int) -> User | None:
+        result = await self.session.execute(select(User).where(User.id == telegram_id))
+        return result.scalar_one_or_none()
+
     async def get_or_create_user(
         self,
         telegram_id: int,

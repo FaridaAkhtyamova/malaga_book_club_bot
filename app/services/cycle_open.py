@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.models import Suggestion, SuggestionCycle
 from app.repositories.cycle_repo import CycleRepository
+from app.repositories.pending_group_card_repo import PendingGroupCardRepository
 from app.repositories.settings_repo import SettingsRepository
 from app.repositories.vote_poll_repo import VotePollRepository
 from app.services.cycle_service import (
@@ -50,6 +51,6 @@ class CycleOpenService:
         await VotePollRepository(self.session).delete_for_cycle(existing.id)
         existing.winner_book_id = None
         await self.session.execute(delete(Suggestion).where(Suggestion.cycle_id == existing.id))
-        await self.session.commit()
+        await PendingGroupCardRepository(self.session).delete_for_cycle(existing.id)
         cycle = await self.cycle_repo.set_status(existing, SuggestionCycle.STATUS_SUGGESTING)
         return cycle, announcement_text(month), True
