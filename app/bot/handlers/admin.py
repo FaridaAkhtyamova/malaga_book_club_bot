@@ -3,7 +3,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.filters.admin_filter import AdminFilter
+from app.bot.admin_filter import AdminFilter
 from app.services.cycle_service import CycleService, InvalidDayError
 
 router = Router()

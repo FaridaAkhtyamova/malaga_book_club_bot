@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     DB_PASS: str = Field(..., alias="DB_PASS")
     DB_NAME: str = Field(..., alias="DB_NAME")
     GOOGLE_BOOKS_API_KEY: str | None = Field(default=None, alias="GOOGLE_BOOKS_API_KEY")
-    ADMIN_IDS: str = Field(default="", alias="ADMIN_IDS")
     TIMEZONE: str = Field(default="Europe/Madrid", alias="TIMEZONE")
     GROUP_CHAT_ID: int | None = Field(default=None, alias="GROUP_CHAT_ID")
     DEBUG: bool = Field(default=False, alias="DEBUG")
@@ -31,17 +30,15 @@ class Settings(BaseSettings):
         return value
 
     @property
-    def admin_ids(self) -> frozenset[int]:
-        if not self.ADMIN_IDS.strip():
-            return frozenset()
-        return frozenset(int(part.strip()) for part in self.ADMIN_IDS.split(",") if part.strip())
-
-    @property
     def async_pg_url(self) -> str:
         return (
             f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}@{self.DB_HOST}:"
             f"{self.DB_PORT}/{self.DB_NAME}"
         )
+
+    @property
+    def admin_ids(self) -> frozenset[int]:
+        return frozenset()
 
 
 @lru_cache

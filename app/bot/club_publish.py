@@ -9,11 +9,10 @@ from aiogram.types import BufferedInputFile, InputPollOption, Message, PollOptio
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.club_chat import send_html_card
+from app.bot.club_chat import club_admin_user_ids, send_html_card
 from app.bot.keyboards.pending_card import pending_card_keyboard
 from app.bot.keyboards.suggest import suggest_dm_keyboard
 from app.bot.media import cover_file_id
-from app.core.config import get_settings
 from app.db.models import Book, MeetingPoll, PendingGroupCard, SuggestionCycle, VotePoll
 from app.services.club_destination import ClubDestination
 from app.services.cycle_service import (
@@ -152,8 +151,8 @@ async def publish_winner_announcement(
     )
 
 
-async def notify_admins(bot: Bot, text: str) -> None:
-    for admin_id in get_settings().admin_ids:
+async def notify_admins(bot: Bot, text: str, chat_id: int) -> None:
+    for admin_id in await club_admin_user_ids(bot, chat_id):
         try:
             await bot.send_message(admin_id, text)
         except TelegramAPIError:
@@ -173,7 +172,7 @@ async def send_pending_card_reviews(
 ) -> None:
     if not cards:
         return
-    for admin_id in get_settings().admin_ids:
+    for admin_id in await club_admin_user_ids(bot, cards[0].chat_id):
         try:
             await bot.send_message(admin_id, _PENDING_INTRO)
         except TelegramAPIError:

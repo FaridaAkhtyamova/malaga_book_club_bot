@@ -4,11 +4,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.club_chat import is_club_admin
 from app.bot.commands import admin_command_names, format_help
 from app.bot.handlers.books import begin_suggest
 from app.bot.keyboards.suggest import SUGGEST_START_PAYLOAD
-from app.core.config import get_settings
 from app.repositories.user_repo import UserRepository
+from app.services.cycle_service import CycleService
 
 router = Router()
 
@@ -53,9 +54,15 @@ async def cmd_start(
 
 
 @router.message(Command("help"))
-async def cmd_help(message: Message) -> None:
+async def cmd_help(message: Message, bot: Bot, session: AsyncSession) -> None:
     user = message.from_user
-    is_admin = user is not None and user.id in get_settings().admin_ids
+    is_admin = user is not None and await is_club_admin(
+        bot,
+        CycleService(session),
+        user.id,
+        current_chat_id=message.chat.id,
+        current_chat_type=message.chat.type,
+    )
     await message.answer(format_help(is_admin=is_admin))
 
 

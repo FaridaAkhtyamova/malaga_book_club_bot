@@ -38,6 +38,41 @@ def wrong_topic_text(settings: ClubSettings) -> str:
     return "\n".join(lines)
 
 
+async def is_chat_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+    except (TelegramBadRequest, TelegramForbiddenError):
+        return False
+    return member.status in {ChatMemberStatus.CREATOR, ChatMemberStatus.ADMINISTRATOR}
+
+
+async def club_admin_user_ids(bot: Bot, chat_id: int) -> list[int]:
+    try:
+        members = await bot.get_chat_administrators(chat_id)
+    except (TelegramBadRequest, TelegramForbiddenError):
+        return []
+    return [member.user.id for member in members if not member.user.is_bot]
+
+
+async def is_club_admin(
+    bot: Bot,
+    service: CycleService,
+    user_id: int,
+    *,
+    current_chat_id: int | None,
+    current_chat_type: ChatType | str | None,
+) -> bool:
+    settings = await service.get_settings()
+    if settings.group_chat_id is not None:
+        return await is_chat_admin(bot, settings.group_chat_id, user_id)
+    if current_chat_id is None or current_chat_type is None:
+        return False
+    chat = ChatType(str(current_chat_type))
+    if chat not in {ChatType.GROUP, ChatType.SUPERGROUP}:
+        return False
+    return await is_chat_admin(bot, current_chat_id, user_id)
+
+
 async def is_club_member(bot: Bot, chat_id: int, user_id: int) -> bool:
     try:
         member = await bot.get_chat_member(chat_id, user_id)

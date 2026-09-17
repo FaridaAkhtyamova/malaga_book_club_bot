@@ -9,8 +9,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.admin_filter import AdminFilter
 from app.bot.callbacks.pending_card import PendingCardCallback
-from app.bot.filters.admin_filter import AdminFilter
 from app.bot.media import cover_file_id
 from app.bot.states.pending_card import PendingCardStates
 from app.db.models import PendingGroupCard

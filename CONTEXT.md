@@ -22,7 +22,8 @@ book_club_bot/
 ├── app/
 │   ├── bot/
 │   │   ├── handlers/     # base, books, group_suggest, group_card_review, club_setup, cycle_open, meeting, admin
-│   │   ├── club_chat.py  # membership and suggest-access checks
+│   │   ├── club_chat.py  # membership, club-admin, and suggest-access checks
+│   │   ├── admin_filter.py
 │   │   ├── club_publish.py
 │   │   ├── commands.py   # BotFather menu + /help
 │   │   ├── keyboards/
@@ -40,7 +41,7 @@ book_club_bot/
 ```
 
 ## 4. ORM (`app/db/models.py`)
-- `User` — telegram id PK, username, full_name, `role` (unused; admins come from `ADMIN_IDS`)
+- `User` — telegram id PK, username, full_name, `role` (unused; admins are group administrators of the bound club chat)
 - `Book` — catalog + manual (`google_id` unique; manuals use `manual-<uuid>`)
 - `ClubSettings` — group, optional forum topic, suggest/vote days, announce hour
 - `SuggestionCycle` — target month, SUGGESTING|VOTING|CLOSED, optional winner book and meeting date
@@ -65,7 +66,7 @@ book_club_bot/
 ## 6. Telegram setup
 - Disable **Group Privacy Mode** in BotFather so the bot sees `#выбор_книги`
 - Bot must be a **group admin** (non-anonymous polls, forum topics)
-- `ADMIN_IDS` — comma-separated Telegram user ids
+- Club admins are Telegram administrators of the bound group (not a list in `.env`)
 - Optional forum topic: `/set_suggest_topic` inside the books topic; `/set_suggest_topic clear` unbinds it
 
 ## 7. Coding standards

@@ -2,9 +2,14 @@ from dataclasses import dataclass
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import BotCommand, BotCommandScopeChat, BotCommandScopeDefault
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeChat,
+    BotCommandScopeChatAdministrators,
+    BotCommandScopeDefault,
+)
 
-from app.core.config import get_settings
+from app.bot.club_chat import club_admin_user_ids
 from app.services.hashtag_suggest import CARD_TEMPLATE
 
 _HASHTAG_HINT = (
@@ -163,10 +168,20 @@ def format_help(*, is_admin: bool) -> str:
     return "\n".join(lines)
 
 
-async def setup_bot_commands(bot: Bot) -> None:
+async def setup_bot_commands(bot: Bot, club_chat_id: int | None = None) -> None:
     await bot.set_my_commands(member_bot_commands(), scope=BotCommandScopeDefault())
+    if club_chat_id is None:
+        return
+
     admin_commands = admin_bot_commands()
-    for admin_id in get_settings().admin_ids:
+    try:
+        await bot.set_my_commands(
+            admin_commands,
+            scope=BotCommandScopeChatAdministrators(chat_id=club_chat_id),
+        )
+    except TelegramBadRequest:
+        pass
+    for admin_id in await club_admin_user_ids(bot, club_chat_id):
         try:
             await bot.set_my_commands(
                 admin_commands,

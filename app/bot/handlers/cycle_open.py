@@ -4,8 +4,8 @@ from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.admin_filter import AdminFilter
 from app.bot.club_publish import publish_club_announcement
-from app.bot.filters.admin_filter import AdminFilter
 from app.services.club_destination import DestinationService, suggestion_announcement_text
 from app.services.cycle_open import CycleOpenService
 from app.services.cycle_service import CycleAlreadyOpenError, GroupNotSetError, month_name_ru

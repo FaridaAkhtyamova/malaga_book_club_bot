@@ -15,6 +15,8 @@ from app.bot.handlers.group_suggest import router as group_suggest_router
 from app.bot.handlers.meeting import router as meeting_router
 from app.bot.middlewares.db import DbSessionMiddleware
 from app.core.config import get_settings
+from app.core.db import AsyncSessionLocal
+from app.repositories.settings_repo import SettingsRepository
 from app.services.club_scheduler import create_scheduler
 
 settings = get_settings()
@@ -27,7 +29,9 @@ async def main() -> None:
     bot = Bot(token=settings.BOT_TOKEN)
     if settings.DEBUG:
         logging.warning("DEBUG mode is on: /open_suggestions can reset the current month")
-    await setup_bot_commands(bot)
+    async with AsyncSessionLocal() as session:
+        club_settings = await SettingsRepository(session).get_or_create()
+        await setup_bot_commands(bot, club_settings.group_chat_id)
     dp = Dispatcher(storage=MemoryStorage())
 
     db_middleware = DbSessionMiddleware()

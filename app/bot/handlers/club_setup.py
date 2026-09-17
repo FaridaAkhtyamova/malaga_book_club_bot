@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bot.admin_filter import AdminFilter
 from app.bot.club_chat import send_html_card
 from app.bot.club_publish import (
     notify_admins,
@@ -17,7 +18,7 @@ from app.bot.club_publish import (
     stop_polls_quietly,
     stop_vote_polls,
 )
-from app.bot.filters.admin_filter import AdminFilter
+from app.bot.commands import setup_bot_commands
 from app.bot.states.meeting import MeetingPollStates
 from app.db.models import SuggestionCycle
 from app.services.club_destination import ClubDestination, DestinationService
@@ -60,7 +61,7 @@ _POLL_CANCELLED = "Запуск опроса дат отменён."
 
 
 @router.message(Command("set_group"))
-async def cmd_set_group(message: Message, session: AsyncSession) -> None:
+async def cmd_set_group(message: Message, session: AsyncSession, bot: Bot) -> None:
     if message.chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
         await message.answer("Эту команду нужно вызвать в группе клуба.")
         return
@@ -69,6 +70,7 @@ async def cmd_set_group(message: Message, session: AsyncSession) -> None:
     previous = (await service.get_settings()).group_chat_id
     await service.bind_group(message.chat.id)
     await DestinationService(session).clear_topic_if_group_changed(previous, message.chat.id)
+    await setup_bot_commands(bot, message.chat.id)
     await message.answer(
         "Группа привязана. Анонсы и опросы будут публиковаться здесь.\n"
         "Чтобы слать предложения в отдельный топик, вызовите /set_suggest_topic из этой ветки."
@@ -412,7 +414,7 @@ async def cmd_close_meeting_poll(
         except TelegramAPIError as exc:
             await message.answer(f"Дата выбрана, но анонс не отправился: {exc}")
             return
-        await notify_admins(bot, meeting_date_admin_prompt(book, winner_day))
+        await notify_admins(bot, meeting_date_admin_prompt(book, winner_day), dest.chat_id)
         if not same_thread:
             await message.answer("Опрос дат закрыт. Дата встречи опубликована в группе.")
         return
