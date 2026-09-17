@@ -1,30 +1,47 @@
+from __future__ import annotations
+
+import logging
+
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
-from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.filters import BaseFilter, Command
+from aiogram.types import Message, User
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.club_chat import resolve_suggest_access
 from app.bot.media import cover_file_id
 from app.repositories.user_repo import UserRepository
 from app.services.cycle_service import CycleNotOpenError, CycleService
-from app.services.hashtag_suggest import GROUP_HINT, parse_hashtag_suggestion
+from app.services.hashtag_suggest import GROUP_HINT, parse_hashtag_suggestion, suggest_source_text
 from app.services.pending_group_card import PendingGroupCardService
 
+logger = logging.getLogger(__name__)
 router = Router()
 
-_HASHTAG_FILTER = F.text.regexp(r"(?i)#выбор_книги") | F.caption.regexp(r"(?i)#выбор_книги")
+# Group Anonymous Bot / Channel comment bot — not our book bot.
+_ALLOWED_TELEGRAM_BOTS = frozenset({1087968824, 136817688})
 _QUEUED = "Карточка уйдёт админу перед голосованием."
 
 
-@router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), _HASHTAG_FILTER)
-@router.edited_message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), _HASHTAG_FILTER)
+class ClubHashtagFilter(BaseFilter):
+    async def __call__(self, message: Message) -> bool:
+        return suggest_source_text(message.text, message.caption) is not None
+
+
+@router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), ClubHashtagFilter())
+@router.edited_message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), ClubHashtagFilter())
 async def on_hashtag_suggestion(
     message: Message,
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    if message.from_user is None or message.from_user.is_bot:
+    sender = _club_sender(message)
+    if sender is None:
+        logger.info(
+            "Skip group hashtag: no user or foreign bot chat_id=%s message_id=%s",
+            message.chat.id,
+            message.message_id,
+        )
         return
 
     access = await resolve_suggest_access(
@@ -32,7 +49,7 @@ async def on_hashtag_suggestion(
         CycleService(session),
         chat_type=message.chat.type,
         chat_id=message.chat.id,
-        user_id=message.from_user.id,
+        user_id=sender.id,
         thread_id=message.message_thread_id,
     )
     if not access.allowed:
@@ -40,13 +57,13 @@ async def on_hashtag_suggestion(
             await message.reply(access.error)
         return
 
-    raw_text = message.text or message.caption or ""
+    raw_text = suggest_source_text(message.text, message.caption) or ""
     parsed = parse_hashtag_suggestion(raw_text)
     user_repo = UserRepository(session)
     user = await user_repo.get_or_create_user(
-        telegram_id=message.from_user.id,
-        username=message.from_user.username,
-        full_name=message.from_user.full_name,
+        telegram_id=sender.id,
+        username=sender.username,
+        full_name=sender.full_name,
     )
     try:
         _, created = await PendingGroupCardService(session).upsert_from_post(
@@ -63,6 +80,15 @@ async def on_hashtag_suggestion(
 
     if created:
         await message.reply(_QUEUED)
+
+
+def _club_sender(message: Message) -> User | None:
+    user = message.from_user
+    if user is None:
+        return None
+    if user.is_bot and user.id not in _ALLOWED_TELEGRAM_BOTS:
+        return None
+    return user
 
 
 @router.message(Command("suggest"), F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}))

@@ -1,3 +1,7 @@
+from __future__ import annotations
+
+import logging
+
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputPollOption, Message, PollOption
@@ -29,6 +33,8 @@ from app.services.meeting_poll import (
 )
 from app.services.pending_group_card import PendingGroupCardService, format_card_preview
 from app.services.vote_close import add_poll_votes, runoff_intro_text, runoff_question
+
+logger = logging.getLogger(__name__)
 
 _POLL_INTRO = (
     "🗳️ Голосуем за книгу месяца. Можно выбрать несколько вариантов. "
@@ -176,8 +182,23 @@ async def _send_pending_card(
             saved = await PendingGroupCardService(session).set_cover(card.id, file_id)
             if saved is not None:
                 card.cover_url = saved.cover_url
-    except TelegramAPIError:
-        pass
+    except TelegramAPIError as exc:
+        logger.warning(
+            "Could not forward group card %s (%s/%s) to admin %s: %s",
+            card.id,
+            card.chat_id,
+            card.message_id,
+            admin_id,
+            exc,
+        )
+        try:
+            await bot.copy_message(
+                chat_id=admin_id,
+                from_chat_id=card.chat_id,
+                message_id=card.message_id,
+            )
+        except TelegramAPIError as copy_exc:
+            logger.warning("Could not copy group card %s to admin %s: %s", card.id, admin_id, copy_exc)
     try:
         await bot.send_message(
             admin_id,

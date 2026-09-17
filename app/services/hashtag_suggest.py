@@ -49,6 +49,23 @@ class HashtagSuggestion:
     description: str | None = None
 
 
+def has_suggest_hashtag(text: str | None) -> bool:
+    if not text:
+        return False
+    return _HASHTAG_RE.search(_plain_hashtag_text(text)) is not None
+
+
+def suggest_source_text(*parts: str | None) -> str | None:
+    for part in parts:
+        if has_suggest_hashtag(part):
+            return _plain_hashtag_text(part)
+    return None
+
+
+def _plain_hashtag_text(text: str) -> str:
+    return text.replace("\u200b", "").replace("\ufeff", "").replace("\xa0", " ")
+
+
 def parse_hashtag_suggestion(text: str) -> HashtagSuggestion | None:
     if not _HASHTAG_RE.search(text):
         return None

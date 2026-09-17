@@ -84,7 +84,7 @@ async def resolve_suggest_access(
         if settings.group_chat_id != chat_id:
             text = "Предлагать книги можно в группе клуба или в личке с ботом."
             return SuggestAccess(False, text)
-        if settings.suggest_topic_id is not None and thread_id != settings.suggest_topic_id:
+        if not _topic_matches(settings.suggest_topic_id, thread_id):
             return SuggestAccess(
                 False,
                 wrong_topic_text(settings),
@@ -98,6 +98,15 @@ async def resolve_suggest_access(
     if await service.get_active_suggesting_cycle() is None:
         return SuggestAccess(False, "Предложения ещё не открыты.")
     return SuggestAccess(True)
+
+
+def _topic_matches(expected: int | None, actual: int | None) -> bool:
+    if expected is None:
+        return True
+    if expected == actual:
+        return True
+    # General forum topic is id 1; some clients send it as missing thread_id.
+    return expected in {1, None} and actual in {1, None}
 
 
 async def send_html_card(
