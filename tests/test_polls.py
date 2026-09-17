@@ -1,5 +1,8 @@
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
 from app.db.models import Book
-from app.services.cycle_service import chunk_books_for_polls
+from app.services.cycle_service import chunk_books_for_polls, collection_month_start, naive_utc
 from app.services.vote_close import VoteCounts
 
 
@@ -30,3 +33,10 @@ def test_vote_counts_detect_tie() -> None:
 def test_vote_counts_single_winner() -> None:
     tallies = VoteCounts(by_book={1: 2, 2: 5})
     assert tallies.leaders() == [2]
+
+
+def test_collection_month_start_uses_first_of_opened_month() -> None:
+    opened = datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc)
+    start = collection_month_start(opened, ZoneInfo("Europe/Madrid"))
+    assert start == datetime(2026, 9, 1, tzinfo=ZoneInfo("Europe/Madrid"))
+    assert naive_utc(start) == datetime(2026, 8, 31, 22, 0)

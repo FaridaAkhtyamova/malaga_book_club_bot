@@ -85,6 +85,13 @@ COMMANDS: tuple[CommandInfo, ...] = (
         admin=True,
     ),
     CommandInfo(
+        "reset_vote",
+        "Сбросить голосование и открыть заново",
+        "/reset_vote — закрыть текущие опросы без выбора победителя "
+        "и открыть голосование заново с книгами с 1-го числа месяца сбора",
+        admin=True,
+    ),
+    CommandInfo(
         "start_meeting_poll",
         "Опрос дат встречи",
         "/start_meeting_poll — опрос дат встречи (если книги нет — сначала спросит название)",

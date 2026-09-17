@@ -4,7 +4,7 @@ import html
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,7 @@ from app.repositories.cycle_vote_repo import CycleVoteRepository
 from app.repositories.meeting_poll_repo import MeetingPollRepository
 from app.repositories.pending_group_card_repo import PendingGroupCardRepository
 from app.repositories.settings_repo import SettingsRepository
+from app.repositories.suggestion_period import SuggestionPeriodRepository
 from app.repositories.suggestion_repo import SuggestionRepository
 from app.repositories.vote_poll_repo import VotePollRepository
 from app.schemas.book import BookSchema
@@ -87,6 +88,10 @@ class VotePollsAlreadyOpenError(CycleServiceError):
     """This cycle already has live Telegram polls."""
 
 
+class NoCycleError(CycleServiceError):
+    """There is no suggestion cycle to reset."""
+
+
 class PendingGroupCardsNeedReviewError(CycleServiceError):
     """Manual group cards must be reviewed before the book poll."""
 
@@ -139,6 +144,17 @@ class PublishedMeetingPoll:
     option_dates: list[str | None]
 
 
+@dataclass(frozen=True, slots=True)
+class VoteResetPlan:
+    cycle: SuggestionCycle
+    chunks: list[list[Book]]
+    open_vote_polls: list[VotePoll]
+    open_meeting_polls: list[MeetingPoll]
+    since: datetime
+    period_start: datetime
+    book_count: int
+
+
 class CycleService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -146,6 +162,7 @@ class CycleService:
         self.cycle_repo = CycleRepository(session)
         self.cycle_vote_repo = CycleVoteRepository(session)
         self.suggestion_repo = SuggestionRepository(session)
+        self.suggestion_period_repo = SuggestionPeriodRepository(session)
         self.book_repo = BookRepository(session)
         self.vote_poll_repo = VotePollRepository(session)
         self.meeting_poll_repo = MeetingPollRepository(session)
@@ -247,6 +264,49 @@ class CycleService:
         if not chunks:
             raise NotEnoughBooksError("Для опроса нужно минимум две предложенные книги.")
         return cycle, chunks
+
+    async def prepare_vote_reset(self) -> VoteResetPlan:
+        cycle = await self.cycle_repo.get_latest()
+        if cycle is None:
+            raise NoCycleError("Сначала откройте сбор командой /open_suggestions.")
+
+        pending = await self.pending_card_repo.list_pending(cycle.id)
+        if pending:
+            raise PendingGroupCardsNeedReviewError(pending)
+
+        period_start = collection_month_start(
+            cycle.opened_at, ZoneInfo(get_settings().TIMEZONE)
+        )
+        since = naive_utc(period_start)
+        books = await self.suggestion_period_repo.list_books_since(cycle.id, since)
+        chunks = chunk_books_for_polls(books)
+        if not chunks:
+            raise NotEnoughBooksError(
+                "С 1-го числа месяца сбора в этом цикле меньше двух книг. "
+                "Нужно минимум две, чтобы заново открыть голосование."
+            )
+        return VoteResetPlan(
+            cycle=cycle,
+            chunks=chunks,
+            open_vote_polls=await self.vote_poll_repo.list_open(cycle.id),
+            open_meeting_polls=await self.meeting_poll_repo.list_open(cycle.id),
+            since=since,
+            period_start=period_start,
+            book_count=len(books),
+        )
+
+    async def apply_vote_reset(self, plan: VoteResetPlan) -> SuggestionCycle:
+        cycle = plan.cycle
+        for poll in plan.open_vote_polls:
+            await self.vote_poll_repo.mark_closed(poll)
+        for poll in plan.open_meeting_polls:
+            await self.meeting_poll_repo.mark_closed(poll)
+        await self.suggestion_period_repo.delete_before(cycle.id, plan.since)
+        if cycle.winner_meeting_date is not None:
+            await self.cycle_vote_repo.clear_meeting_date(cycle)
+        if cycle.winner_book_id is not None:
+            await self.cycle_vote_repo.clear_winner(cycle)
+        return cycle
 
     async def mark_voting(self, cycle: SuggestionCycle) -> SuggestionCycle:
         return await self.cycle_repo.set_status(cycle, SuggestionCycle.STATUS_VOTING)
@@ -425,6 +485,18 @@ class CycleService:
         if now.tzinfo is None:
             return now.replace(tzinfo=tz)
         return now.astimezone(tz)
+
+
+def collection_month_start(opened_at: datetime, tz: ZoneInfo) -> datetime:
+    opened = opened_at if opened_at.tzinfo is not None else opened_at.replace(tzinfo=timezone.utc)
+    local = opened.astimezone(tz)
+    return local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def naive_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def next_year_month(now: datetime) -> tuple[int, int]:

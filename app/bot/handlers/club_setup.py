@@ -14,6 +14,7 @@ from app.bot.club_publish import (
     publish_winner_announcement,
     send_pending_card_reviews,
     stop_meeting_polls,
+    stop_polls_quietly,
     stop_vote_polls,
 )
 from app.bot.filters.admin_filter import AdminFilter
@@ -26,6 +27,7 @@ from app.services.cycle_service import (
     CycleService,
     GroupNotSetError,
     MeetingPollsAlreadyOpenError,
+    NoCycleError,
     NoOpenMeetingPollsError,
     NoOpenPollsError,
     NoWinnerError,
@@ -240,6 +242,49 @@ async def cmd_close_vote(
     await service.record_vote_polls(cycle, published)
     if not same_thread:
         await message.answer("Ничья. Второй тур опубликован в группе.")
+
+
+@router.message(Command("reset_vote"))
+async def cmd_reset_vote(
+    message: Message,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    dest = await DestinationService(session).get_destination()
+    if dest is None:
+        await message.answer("Сначала привяжите группу командой /set_group.")
+        return
+
+    service = CycleService(session)
+    try:
+        plan = await service.prepare_vote_reset()
+    except NoCycleError as exc:
+        await message.answer(str(exc))
+        return
+    except PendingGroupCardsNeedReviewError as exc:
+        await send_pending_card_reviews(bot, exc.cards, session)
+        await message.answer("Сначала проверьте карточки из группы в личке.")
+        return
+    except NotEnoughBooksError as exc:
+        await message.answer(str(exc))
+        return
+
+    await stop_polls_quietly(bot, [*plan.open_vote_polls, *plan.open_meeting_polls])
+    cycle = await service.apply_vote_reset(plan)
+
+    try:
+        published = await publish_vote_polls(bot, dest, cycle, plan.chunks)
+    except TelegramAPIError as exc:
+        await message.answer(f"Старые опросы закрыты, но новые не отправились: {exc}")
+        return
+
+    await service.record_vote_polls(cycle, published)
+    await service.mark_voting(cycle)
+    started = plan.period_start
+    await message.answer(
+        f"Голосование сброшено. Новые опросы с {plan.book_count} книгами "
+        f"с {started.day:02d}.{started.month:02d}.{started.year}."
+    )
 
 
 @router.message(Command("start_meeting_poll"))

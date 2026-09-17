@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
@@ -93,6 +94,22 @@ async def publish_vote_polls(
         if recorded is not None:
             published.append(recorded)
     return published
+
+
+async def stop_polls_quietly(
+    bot: Bot,
+    polls: Sequence[VotePoll | MeetingPoll],
+) -> None:
+    for poll in polls:
+        try:
+            await bot.stop_poll(chat_id=poll.chat_id, message_id=poll.message_id)
+        except TelegramAPIError as exc:
+            logger.warning(
+                "Could not stop poll %s/%s: %s",
+                poll.chat_id,
+                poll.message_id,
+                exc,
+            )
 
 
 def _published_from_message(
