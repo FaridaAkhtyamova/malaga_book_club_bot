@@ -52,7 +52,7 @@ book_club_bot/
 ## 5. Features (current)
 - `/start` registers the user; `/start suggest` opens the DM suggest flow; `/help` lists commands
 - Group: `#выбор_книги` card (title, author; pages from «стр»/«страниц»; suggester from Telegram user); stored for admin review, then included in `/start_vote`
-- DM: `/suggest` → Google Books, then Open Library; manual add; confirm before posting the card to the group/topic
+- DM: `/suggest` → Google Books (`intitle` / `printType=books`, then full-text if thin), then Open Library; results are deduped and ranked by title/author match; manual add; confirm before posting the card to the group/topic
 - Admin: `/set_group`, `/set_suggest_topic`, `/set_suggest_day`, `/set_vote_day`, `/open_suggestions`, `/start_vote`, `/close_vote`, `/start_meeting_poll`, `/close_meeting_poll`, `/create_meeting`, `/cycle_status`, `/month_book`
 - `/close_vote` with a single winner also publishes the meeting-date poll; `/start_meeting_poll` works without a closed book vote and asks the admin for a title if none is stored
 - `/close_meeting_poll` with a single date publishes the date in the group (no admin command in that message) and DMs admins to run `/create_meeting`
