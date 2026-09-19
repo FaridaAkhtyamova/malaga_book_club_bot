@@ -1,21 +1,20 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Book, User
+from app.db.models import Book, SuggestionCycle, User
 from app.repositories.book_repo import BookRepository
-from app.repositories.cycle_repo import CycleRepository
 from app.repositories.suggestion_repo import SuggestionRepository
-from app.services.cycle_service import CycleNotOpenError
 
 
 class ManualBookService:
     def __init__(self, session: AsyncSession) -> None:
-        self.cycle_repo = CycleRepository(session)
+        self.session = session
         self.suggestion_repo = SuggestionRepository(session)
         self.book_repo = BookRepository(session)
 
     async def add(
         self,
         user: User,
+        cycle: SuggestionCycle,
         *,
         title: str,
         authors: str | None,
@@ -23,10 +22,6 @@ class ManualBookService:
         page_count: int | None,
         cover_url: str | None = None,
     ) -> tuple[Book, bool]:
-        cycle = await self.cycle_repo.get_latest_suggesting()
-        if cycle is None:
-            raise CycleNotOpenError("Предложения ещё не открыты.")
-
         needle = title.casefold()
         for existing in await self.suggestion_repo.list_books(cycle.id):
             if existing.title.casefold() == needle:

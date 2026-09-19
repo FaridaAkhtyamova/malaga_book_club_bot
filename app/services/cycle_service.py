@@ -4,7 +4,7 @@ import html
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -156,8 +156,9 @@ class VoteResetPlan:
 
 
 class CycleService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, club: ClubSettings) -> None:
         self.session = session
+        self.club = club
         self.settings_repo = SettingsRepository(session)
         self.cycle_repo = CycleRepository(session)
         self.cycle_vote_repo = CycleVoteRepository(session)
@@ -169,38 +170,27 @@ class CycleService:
         self.pending_card_repo = PendingGroupCardRepository(session)
 
     async def get_settings(self) -> ClubSettings:
-        return await self.settings_repo.get_or_create()
-
-    async def bind_group(self, chat_id: int) -> ClubSettings:
-        settings = await self.settings_repo.get_or_create()
-        settings.group_chat_id = chat_id
-        return await self.settings_repo.save(settings)
+        return self.club
 
     async def set_suggest_day(self, day: int) -> ClubSettings:
         _validate_day(day)
-        settings = await self.settings_repo.get_or_create()
-        if settings.vote_day is not None and day >= settings.vote_day:
+        if self.club.vote_day is not None and day >= self.club.vote_day:
             raise InvalidDayError("День предложений должен быть раньше дня голосования.")
-        settings.suggest_day = day
-        return await self.settings_repo.save(settings)
+        self.club.suggest_day = day
+        return await self.settings_repo.save(self.club)
 
     async def set_vote_day(self, day: int) -> ClubSettings:
         _validate_day(day)
-        settings = await self.settings_repo.get_or_create()
-        if settings.suggest_day is not None and day <= settings.suggest_day:
+        if self.club.suggest_day is not None and day <= self.club.suggest_day:
             raise InvalidDayError("День голосования должен быть позже дня предложений.")
-        settings.vote_day = day
-        return await self.settings_repo.save(settings)
-
-    async def is_club_group(self, chat_id: int) -> bool:
-        settings = await self.settings_repo.get_or_create()
-        return settings.group_chat_id is not None and settings.group_chat_id == chat_id
+        self.club.vote_day = day
+        return await self.settings_repo.save(self.club)
 
     async def get_active_suggesting_cycle(self) -> SuggestionCycle | None:
-        return await self.cycle_repo.get_latest_suggesting()
+        return await self.cycle_repo.get_latest_suggesting(self.club.id)
 
     async def get_latest_cycle(self) -> SuggestionCycle | None:
-        return await self.cycle_repo.get_latest()
+        return await self.cycle_repo.get_latest(self.club.id)
 
     async def count_suggestions(self, cycle_id: int) -> int:
         return await self.suggestion_repo.count(cycle_id)
@@ -212,17 +202,16 @@ class CycleService:
         self,
         now: datetime | None = None,
     ) -> tuple[SuggestionCycle, str]:
-        settings = await self.settings_repo.get_or_create()
-        if settings.group_chat_id is None:
+        if self.club.group_chat_id is None:
             raise GroupNotSetError("Сначала привяжите группу командой /set_group.")
 
         current = self._localized_now(now)
         year, month = next_year_month(current)
-        existing = await self.cycle_repo.get_by_month(year, month)
+        existing = await self.cycle_repo.get_by_month(self.club.id, year, month)
         if existing is not None:
             raise CycleAlreadyOpenError("Сбор предложений на этот месяц уже был открыт.")
 
-        cycle = await self.cycle_repo.create(year, month)
+        cycle = await self.cycle_repo.create(self.club.id, year, month)
         return cycle, announcement_text(month)
 
     async def add_suggestion(
@@ -230,7 +219,7 @@ class CycleService:
         user: User,
         book_schema: BookSchema,
     ) -> tuple[Book, bool]:
-        cycle = await self.cycle_repo.get_latest_suggesting()
+        cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
         if cycle is None:
             raise CycleNotOpenError("Предложения ещё не открыты.")
 
@@ -244,9 +233,9 @@ class CycleService:
         return book, True
 
     async def prepare_vote(self) -> tuple[SuggestionCycle, list[list[Book]]]:
-        cycle = await self.cycle_repo.get_latest_suggesting()
+        cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
         if cycle is None:
-            cycle = await self.cycle_vote_repo.get_latest_voting()
+            cycle = await self.cycle_vote_repo.get_latest_voting(self.club.id)
             if cycle is None:
                 raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
             open_polls = await self.vote_poll_repo.list_open(cycle.id)
@@ -266,7 +255,7 @@ class CycleService:
         return cycle, chunks
 
     async def prepare_vote_reset(self) -> VoteResetPlan:
-        cycle = await self.cycle_repo.get_latest()
+        cycle = await self.cycle_repo.get_latest(self.club.id)
         if cycle is None:
             raise NoCycleError("Сначала откройте сбор командой /open_suggestions.")
 
@@ -297,10 +286,10 @@ class CycleService:
 
     async def apply_vote_reset(self, plan: VoteResetPlan) -> SuggestionCycle:
         cycle = plan.cycle
-        for poll in plan.open_vote_polls:
-            await self.vote_poll_repo.mark_closed(poll)
-        for poll in plan.open_meeting_polls:
-            await self.meeting_poll_repo.mark_closed(poll)
+        for vote_poll in plan.open_vote_polls:
+            await self.vote_poll_repo.mark_closed(vote_poll)
+        for meeting_poll in plan.open_meeting_polls:
+            await self.meeting_poll_repo.mark_closed(meeting_poll)
         await self.suggestion_period_repo.delete_before(cycle.id, plan.since)
         if cycle.winner_meeting_date is not None:
             await self.cycle_vote_repo.clear_meeting_date(cycle)
@@ -326,7 +315,7 @@ class CycleService:
             )
 
     async def get_latest_voting(self) -> SuggestionCycle | None:
-        return await self.cycle_vote_repo.get_latest_voting()
+        return await self.cycle_vote_repo.get_latest_voting(self.club.id)
 
     async def require_open_vote_polls(self, cycle: SuggestionCycle) -> list[VotePoll]:
         if cycle.status != SuggestionCycle.STATUS_VOTING:
@@ -368,7 +357,7 @@ class CycleService:
         return books[0] if books else None
 
     async def get_selected_cycle(self) -> SuggestionCycle:
-        cycle = await self.cycle_vote_repo.get_latest_with_winner()
+        cycle = await self.cycle_vote_repo.get_latest_with_winner(self.club.id)
         if cycle is None or cycle.winner is None:
             raise NoWinnerError(
                 "Сначала закройте голосование за книгу командой /close_vote."
@@ -448,30 +437,29 @@ class CycleService:
     async def run_scheduled(
         self, now: datetime
     ) -> ScheduledAnnounce | ScheduledVote | ScheduledPendingReview | None:
-        settings = await self.settings_repo.get_or_create()
-        if settings.group_chat_id is None:
+        if self.club.group_chat_id is None:
             return None
 
         current = self._localized_now(now)
-        if current.hour < settings.announce_hour:
+        if current.hour < self.club.announce_hour:
             return None
 
-        if settings.suggest_day is not None and current.day == settings.suggest_day:
+        if self.club.suggest_day is not None and current.day == self.club.suggest_day:
             year, month = next_year_month(current)
-            existing = await self.cycle_repo.get_by_month(year, month)
+            existing = await self.cycle_repo.get_by_month(self.club.id, year, month)
             if existing is None:
                 _, text = await self.open_suggestions_for_next_month(current)
                 return ScheduledAnnounce(text=text)
 
-        if settings.vote_day is not None and current.day == settings.vote_day:
-            cycle = await self.cycle_repo.get_latest_suggesting()
+        if self.club.vote_day is not None and current.day == self.club.vote_day:
+            cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
             if cycle is not None:
                 try:
                     vote_cycle, chunks = await self.prepare_vote()
                 except NotEnoughBooksError:
                     return None
                 except PendingGroupCardsNeedReviewError as exc:
-                    if current.hour != settings.announce_hour:
+                    if current.hour != self.club.announce_hour:
                         return None
                     return ScheduledPendingReview(cards=exc.cards)
                 return ScheduledVote(cycle=vote_cycle, chunks=chunks)
@@ -488,7 +476,7 @@ class CycleService:
 
 
 def collection_month_start(opened_at: datetime, tz: ZoneInfo) -> datetime:
-    opened = opened_at if opened_at.tzinfo is not None else opened_at.replace(tzinfo=timezone.utc)
+    opened = opened_at if opened_at.tzinfo is not None else opened_at.replace(tzinfo=UTC)
     local = opened.astimezone(tz)
     return local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
@@ -496,7 +484,7 @@ def collection_month_start(opened_at: datetime, tz: ZoneInfo) -> datetime:
 def naive_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value.astimezone(UTC).replace(tzinfo=None)
 
 
 def next_year_month(now: datetime) -> tuple[int, int]:

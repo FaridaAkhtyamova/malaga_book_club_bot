@@ -10,7 +10,6 @@ from app.bot.commands import admin_command_names, format_help
 from app.bot.handlers.books import begin_suggest
 from app.bot.keyboards.suggest import SUGGEST_START_PAYLOAD
 from app.repositories.user_repo import UserRepository
-from app.services.cycle_service import CycleService
 
 router = Router()
 router.message.filter(F.chat.type == ChatType.PRIVATE)
@@ -60,7 +59,7 @@ async def cmd_help(message: Message, bot: Bot, session: AsyncSession) -> None:
     user = message.from_user
     is_admin = user is not None and await is_club_admin(
         bot,
-        CycleService(session),
+        session,
         user.id,
         current_chat_id=message.chat.id,
         current_chat_type=message.chat.type,

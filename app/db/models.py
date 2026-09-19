@@ -25,8 +25,13 @@ class User(Base):
     username: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(50), default="MEMBER", nullable=False)
+    active_club_id: Mapped[int | None] = mapped_column(
+        ForeignKey("club_settings.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
+    active_club: Mapped["ClubSettings | None"] = relationship(foreign_keys=[active_club_id])
     votes: Mapped[list["Vote"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     rsvps: Mapped[list["RSVP"]] = relationship(back_populates="user", cascade="all, delete-orphan")
     suggestions: Mapped[list["Suggestion"]] = relationship(
@@ -100,19 +105,30 @@ class RSVP(Base):
 
 class ClubSettings(Base):
     __tablename__ = "club_settings"
+    __table_args__ = (
+        UniqueConstraint("group_chat_id", name="uq_club_settings_group_chat_id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     group_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     suggest_topic_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     suggest_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     vote_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     announce_hour: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
 
+    cycles: Mapped[list["SuggestionCycle"]] = relationship(back_populates="club")
+
 
 class SuggestionCycle(Base):
     __tablename__ = "suggestion_cycles"
     __table_args__ = (
-        UniqueConstraint("target_year", "target_month", name="uq_cycle_target_month"),
+        UniqueConstraint(
+            "club_id",
+            "target_year",
+            "target_month",
+            name="uq_cycle_club_target_month",
+        ),
     )
 
     STATUS_SUGGESTING = "SUGGESTING"
@@ -120,6 +136,7 @@ class SuggestionCycle(Base):
     STATUS_CLOSED = "CLOSED"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    club_id: Mapped[int] = mapped_column(ForeignKey("club_settings.id"), nullable=False)
     target_year: Mapped[int] = mapped_column(Integer, nullable=False)
     target_month: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(50), default=STATUS_SUGGESTING, nullable=False)
@@ -127,6 +144,7 @@ class SuggestionCycle(Base):
     winner_book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True)
     winner_meeting_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
+    club: Mapped[ClubSettings] = relationship(back_populates="cycles")
     suggestions: Mapped[list["Suggestion"]] = relationship(
         back_populates="cycle", cascade="all, delete-orphan"
     )

@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 
 from aiogram import Bot
@@ -43,6 +45,11 @@ COMMANDS: tuple[CommandInfo, ...] = (
         "/suggest Название — то же, сразу с названием",
     ),
     CommandInfo(
+        "clubs",
+        "Список клубов и переключение",
+        "/clubs — список групп, к которым есть доступ, и выбор клуба для команд в личке",
+    ),
+    CommandInfo(
         "cancel",
         "Отменить текущий ввод",
         "/cancel — отменить поиск, проверку карточки, опрос дат или создание встречи",
@@ -50,7 +57,8 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "set_group",
         "Привязать эту группу как клубную",
-        "/set_group — запомнить эту группу как клубную (только из группы)",
+        "/set_group — запомнить эту группу как клубную (только из группы; "
+        "каждая группа — отдельный клуб)",
         admin=True,
         group_setup=True,
     ),
@@ -123,7 +131,7 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "cycle_status",
         "Текущие настройки и цикл",
-        "/cycle_status — группа, топик, дни, месяц и сколько книг уже предложено",
+        "/cycle_status — клуб, топик, дни, месяц и сколько книг уже предложено",
         admin=True,
     ),
     CommandInfo(
@@ -177,30 +185,41 @@ def format_help(*, is_admin: bool) -> str:
     lines.extend(item.help_line for item in COMMANDS if item.admin)
     lines.append("")
     lines.append(
-        "Админские команды — тоже в личке. "
+        "Админские команды — тоже в личке и относятся к выбранному клубу "
+        "(/clubs, если групп несколько). "
         "Исключения: /set_group и /set_suggest_topic — только из группы."
     )
     return "\n".join(lines)
 
 
-async def setup_bot_commands(bot: Bot, club_chat_id: int | None = None) -> None:
+async def setup_bot_commands(
+    bot: Bot,
+    club_chat_ids: int | Sequence[int] | None = None,
+) -> None:
     await bot.set_my_commands(member_bot_commands(), scope=BotCommandScopeDefault())
     await bot.set_my_commands([], scope=BotCommandScopeAllGroupChats())
-    if club_chat_id is None:
+    if isinstance(club_chat_ids, int):
+        ids = [club_chat_ids]
+    else:
+        ids = [chat_id for chat_id in (club_chat_ids or []) if chat_id is not None]
+    if not ids:
         return
 
-    try:
-        await bot.set_my_commands(
-            group_setup_bot_commands(),
-            scope=BotCommandScopeChatAdministrators(chat_id=club_chat_id),
-        )
-    except TelegramBadRequest:
-        pass
-    for admin_id in await club_admin_user_ids(bot, club_chat_id):
-        try:
+    seen_admins: set[int] = set()
+    for chat_id in ids:
+        with suppress(TelegramBadRequest):
             await bot.set_my_commands(
-                admin_bot_commands(),
-                scope=BotCommandScopeChat(chat_id=admin_id),
+                group_setup_bot_commands(),
+                scope=BotCommandScopeChatAdministrators(chat_id=chat_id),
             )
-        except TelegramBadRequest:
-            continue
+        for admin_id in await club_admin_user_ids(bot, chat_id):
+            if admin_id in seen_admins:
+                continue
+            seen_admins.add(admin_id)
+            try:
+                await bot.set_my_commands(
+                    admin_bot_commands(),
+                    scope=BotCommandScopeChat(chat_id=admin_id),
+                )
+            except TelegramBadRequest:
+                continue

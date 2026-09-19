@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.admin_filter import AdminFilter
 from app.bot.club_chat import send_html_card
+from app.bot.club_context import club_from_state, remember_club, require_admin_club
 from app.bot.club_publish import (
     notify_admins,
     publish_meeting_poll,
@@ -21,7 +22,13 @@ from app.bot.club_publish import (
 from app.bot.commands import setup_bot_commands
 from app.bot.states.meeting import MeetingPollStates
 from app.db.models import SuggestionCycle
-from app.services.club_destination import ClubDestination, DestinationService
+from app.repositories.settings_repo import SettingsRepository
+from app.services.club_destination import (
+    ClubDestination,
+    DestinationService,
+    club_label,
+    destination_of,
+)
 from app.services.cycle_service import (
     CycleNotOpenError,
     CycleNotVotingError,
@@ -31,8 +38,8 @@ from app.services.cycle_service import (
     NoCycleError,
     NoOpenMeetingPollsError,
     NoOpenPollsError,
-    NoWinnerError,
     NotEnoughBooksError,
+    NoWinnerError,
     PendingGroupCardsNeedReviewError,
     VotePollsAlreadyOpenError,
     chunk_books_for_polls,
@@ -68,11 +75,13 @@ async def cmd_set_group(message: Message, session: AsyncSession, bot: Bot) -> No
         await message.answer("Эту команду нужно вызвать в группе клуба.")
         return
 
-    service = CycleService(session)
-    previous = (await service.get_settings()).group_chat_id
-    await service.bind_group(message.chat.id)
-    await DestinationService(session).clear_topic_if_group_changed(previous, message.chat.id)
-    await setup_bot_commands(bot, message.chat.id)
+    repo = SettingsRepository(session)
+    await repo.bind_group(message.chat.id, message.chat.title)
+    clubs = await repo.list_bound()
+    await setup_bot_commands(
+        bot,
+        [club.group_chat_id for club in clubs if club.group_chat_id is not None],
+    )
     await message.answer(
         "Группа привязана. Анонсы и опросы будут публиковаться здесь.\n"
         "Чтобы слать предложения в отдельный топик, вызовите /set_suggest_topic из этой ветки."
@@ -84,15 +93,23 @@ async def cmd_set_suggest_topic(
     message: Message,
     command: CommandObject,
     session: AsyncSession,
+    bot: Bot,
 ) -> None:
-    dest_service = DestinationService(session)
     arg = (command.args or "").strip().casefold()
     if arg in _CLEAR_TOPIC:
-        await dest_service.clear_suggest_topic()
-        if message.chat.type == ChatType.PRIVATE:
-            await message.answer(
-                "Топик предложений сброшен. Можно предлагать в любом месте группы."
-            )
+        if message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
+            club = await SettingsRepository(session).get_by_chat_id(message.chat.id)
+            if club is None:
+                await message.answer("Сначала привяжите эту группу командой /set_group.")
+                return
+        else:
+            club = await require_admin_club(message, bot, session)
+            if club is None:
+                return
+        await DestinationService(session, club).clear_suggest_topic()
+        await message.answer(
+            "Топик предложений сброшен. Можно предлагать в любом месте группы."
+        )
         return
 
     if message.chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
@@ -109,8 +126,15 @@ async def cmd_set_suggest_topic(
         )
         return
 
+    club = await SettingsRepository(session).get_by_chat_id(message.chat.id)
+    if club is None:
+        await message.answer("Сначала привяжите эту группу командой /set_group.")
+        return
+
     try:
-        settings = await dest_service.bind_suggest_topic(message.chat.id, thread_id)
+        settings = await DestinationService(session, club).bind_suggest_topic(
+            message.chat.id, thread_id
+        )
     except GroupNotSetError as exc:
         await message.answer(str(exc))
         return
@@ -124,12 +148,15 @@ async def cmd_start_vote(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    dest = await DestinationService(session).get_destination()
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    dest = destination_of(club)
     if dest is None:
         await message.answer("Сначала привяжите группу командой /set_group.")
         return
 
-    service = CycleService(session)
+    service = CycleService(session, club)
     try:
         cycle, chunks = await service.prepare_vote()
     except CycleNotOpenError as exc:
@@ -167,12 +194,15 @@ async def cmd_close_vote(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    dest = await DestinationService(session).get_destination()
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    dest = destination_of(club)
     if dest is None:
         await message.answer("Сначала привяжите группу командой /set_group.")
         return
 
-    service = CycleService(session)
+    service = CycleService(session, club)
     cycle = await service.get_latest_voting()
     if cycle is None:
         await message.answer("Сейчас нет активного голосования за книгу.")
@@ -257,12 +287,15 @@ async def cmd_reset_vote(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    dest = await DestinationService(session).get_destination()
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    dest = destination_of(club)
     if dest is None:
         await message.answer("Сначала привяжите группу командой /set_group.")
         return
 
-    service = CycleService(session)
+    service = CycleService(session, club)
     try:
         plan = await service.prepare_vote_reset()
     except NoCycleError as exc:
@@ -301,12 +334,15 @@ async def cmd_start_meeting_poll(
     state: FSMContext,
     bot: Bot,
 ) -> None:
-    dest = await DestinationService(session).get_destination()
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    dest = destination_of(club)
     if dest is None:
         await message.answer("Сначала привяжите группу командой /set_group.")
         return
 
-    service = CycleService(session)
+    service = CycleService(session, club)
     try:
         cycle = await service.prepare_meeting_poll()
     except (CycleNotOpenError, MeetingPollsAlreadyOpenError) as exc:
@@ -315,6 +351,7 @@ async def cmd_start_meeting_poll(
 
     book = await service.book_for_cycle(cycle)
     if book is None:
+        await remember_club(state, club)
         await state.set_state(MeetingPollStates.waiting_title)
         await message.answer(_ASK_POLL_TITLE)
         return
@@ -345,13 +382,19 @@ async def on_meeting_poll_title(
         await message.answer(_ASK_POLL_TITLE)
         return
 
-    dest = await DestinationService(session).get_destination()
+    club = await club_from_state(state, session)
+    if club is None:
+        club = await require_admin_club(message, bot, session)
+    if club is None:
+        await state.clear()
+        return
+    dest = destination_of(club)
     if dest is None:
         await state.clear()
         await message.answer("Сначала привяжите группу командой /set_group.")
         return
 
-    service = CycleService(session)
+    service = CycleService(session, club)
     try:
         cycle = await service.prepare_meeting_poll()
     except (CycleNotOpenError, MeetingPollsAlreadyOpenError) as exc:
@@ -370,12 +413,15 @@ async def cmd_close_meeting_poll(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    dest = await DestinationService(session).get_destination()
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    dest = destination_of(club)
     if dest is None:
         await message.answer("Сначала привяжите группу командой /set_group.")
         return
 
-    service = CycleService(session)
+    service = CycleService(session, club)
     try:
         cycle = await service.get_meeting_poll_cycle()
         polls = await service.require_open_meeting_polls(cycle)
@@ -447,12 +493,15 @@ async def cmd_close_meeting_poll(
 
 
 @dm_router.message(Command("cycle_status"))
-async def cmd_cycle_status(message: Message, session: AsyncSession) -> None:
-    service = CycleService(session)
-    settings = await service.get_settings()
+async def cmd_cycle_status(message: Message, session: AsyncSession, bot: Bot) -> None:
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    service = CycleService(session, club)
+    settings = club
     cycle = await service.get_latest_cycle()
 
-    group = str(settings.group_chat_id) if settings.group_chat_id is not None else "не задана"
+    group = club_label(club)
     topic = (
         str(settings.suggest_topic_id) if settings.suggest_topic_id is not None else "не задан"
     )
@@ -460,7 +509,7 @@ async def cmd_cycle_status(message: Message, session: AsyncSession) -> None:
     vote_day = str(settings.vote_day) if settings.vote_day is not None else "не задан"
 
     lines = [
-        f"Группа: {group}",
+        f"Клуб: {group}",
         f"Топик предложений: {topic}",
         f"День предложений: {suggest_day}",
         f"День голосования: {vote_day}",
@@ -488,7 +537,10 @@ async def cmd_cycle_status(message: Message, session: AsyncSession) -> None:
 
 @dm_router.message(Command("month_book"))
 async def cmd_month_book(message: Message, session: AsyncSession, bot: Bot) -> None:
-    service = CycleService(session)
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    service = CycleService(session, club)
     try:
         cycle = await service.get_selected_cycle()
     except NoWinnerError as exc:

@@ -8,6 +8,7 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
+from aiogram.types import User as TelegramUser
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.callbacks.book import (
@@ -17,6 +18,7 @@ from app.bot.callbacks.book import (
     BookSelectCallback,
 )
 from app.bot.club_chat import SuggestAccess, resolve_suggest_access, send_html_card
+from app.bot.club_context import club_from_state, remember_club, require_member_club
 from app.bot.keyboards.book import (
     CANCEL_BUTTON,
     RETRY_BUTTON,
@@ -26,12 +28,13 @@ from app.bot.keyboards.book import (
 )
 from app.bot.media import cover_file_id
 from app.bot.states.book import BookSearchStates
-from app.db.models import Book, User
+from app.db.models import Book, ClubSettings, User
+from app.repositories.settings_repo import SettingsRepository
 from app.repositories.user_repo import UserRepository
 from app.schemas.book import BookSchema
 from app.services.book_card import format_book_card, format_group_card
 from app.services.catalog import search_catalog
-from app.services.club_destination import DestinationService
+from app.services.club_destination import destination_of
 from app.services.cycle_service import CycleNotOpenError, CycleService
 from app.services.hashtag_suggest import GROUP_HINT
 from app.services.manual_book import ManualBookService
@@ -58,6 +61,8 @@ async def cmd_suggest(
     bot: Bot,
 ) -> None:
     query = (command.args or "").strip() or None
+    if query:
+        await state.update_data(pending_suggest_query=query)
     await begin_suggest(message, state, session, bot, query=query)
 
 
@@ -101,7 +106,7 @@ async def process_search_query(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    if not await _ensure_can_suggest(message, session, bot, state):
+    if await _ensure_can_suggest(message, session, bot, state) is None:
         return
 
     query = (message.text or "").strip()
@@ -123,7 +128,7 @@ async def on_book_missing(
         await callback.answer()
         return
 
-    if not await _ensure_can_suggest_callback(callback, session, bot, state):
+    if await _ensure_can_suggest_callback(callback, session, bot, state) is None:
         return
 
     data = await state.get_data()
@@ -148,7 +153,7 @@ async def process_manual_title(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    if not await _ensure_can_suggest(message, session, bot, state):
+    if await _ensure_can_suggest(message, session, bot, state) is None:
         return
 
     data = await state.get_data()
@@ -172,7 +177,7 @@ async def process_manual_authors(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    if not await _ensure_can_suggest(message, session, bot, state):
+    if await _ensure_can_suggest(message, session, bot, state) is None:
         return
 
     raw = (message.text or "").strip()
@@ -189,7 +194,7 @@ async def process_manual_pages(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    if not await _ensure_can_suggest(message, session, bot, state):
+    if await _ensure_can_suggest(message, session, bot, state) is None:
         return
 
     raw = (message.text or "").strip()
@@ -217,7 +222,7 @@ async def process_manual_description(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    if not await _ensure_can_suggest(message, session, bot, state):
+    if await _ensure_can_suggest(message, session, bot, state) is None:
         return
 
     raw = (message.text or "").strip()
@@ -236,7 +241,7 @@ async def process_manual_cover(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-    if not await _ensure_can_suggest(message, session, bot, state):
+    if await _ensure_can_suggest(message, session, bot, state) is None:
         return
     if message.from_user is None:
         return
@@ -266,7 +271,7 @@ async def on_book_select(
         await callback.answer()
         return
 
-    if not await _ensure_can_suggest_callback(callback, session, bot, state):
+    if await _ensure_can_suggest_callback(callback, session, bot, state) is None:
         return
 
     data = await state.get_data()
@@ -326,7 +331,7 @@ async def on_confirm_send(
     if callback.from_user is None:
         await callback.answer()
         return
-    if not await _ensure_can_suggest_callback(callback, session, bot, state):
+    if await _ensure_can_suggest_callback(callback, session, bot, state) is None:
         return
 
     if callback_data.action == "retry":
@@ -367,7 +372,7 @@ async def on_confirm_send(
         return
 
     await callback.answer()
-    published = await _publish_to_group(bot, session, book, user)
+    published = await _publish_to_group(bot, session, book, user, data)
     text = (
         "Карточка отправлена в общий чат."
         if published
@@ -391,8 +396,13 @@ async def begin_suggest(
     bot: Bot,
     *,
     query: str | None = None,
+    actor: TelegramUser | None = None,
 ) -> None:
-    if not await _ensure_can_suggest(message, session, bot, state):
+    person = actor or message.from_user
+    if person is None:
+        return
+    club = await _ensure_can_suggest(message, session, bot, state, user=person)
+    if club is None:
         return
 
     if message.chat.type != ChatType.PRIVATE:
@@ -400,6 +410,7 @@ async def begin_suggest(
         return
 
     await state.clear()
+    await remember_club(state, club)
     if query:
         await message.answer("Ищу…", reply_markup=suggest_control_keyboard())
         await _search_and_show(message, state, query)
@@ -414,20 +425,26 @@ async def _ensure_can_suggest(
     session: AsyncSession,
     bot: Bot,
     state: FSMContext | None = None,
-) -> bool:
-    if message.from_user is None:
-        return False
+    *,
+    user: TelegramUser | None = None,
+) -> ClubSettings | None:
+    person = user or message.from_user
+    if person is None:
+        return None
     if message.chat.type != ChatType.PRIVATE:
         await message.answer(GROUP_HINT)
-        return False
-    access = await _resolve_access(bot, session, message, message.from_user.id)
+        return None
+    club = await _club_for_suggest(bot, session, state, message, person.id)
+    if club is None:
+        return None
+    access = await _resolve_access(bot, session, club, message, person.id)
     if access.allowed:
-        return True
+        return club
     if state is not None and access.clear_state:
         await state.clear()
     if access.error:
         await message.answer(access.error, reply_markup=ReplyKeyboardRemove())
-    return False
+    return None
 
 
 async def _ensure_can_suggest_callback(
@@ -435,19 +452,27 @@ async def _ensure_can_suggest_callback(
     session: AsyncSession,
     bot: Bot,
     state: FSMContext | None = None,
-) -> bool:
+) -> ClubSettings | None:
     if callback.message is None or not isinstance(callback.message, Message):
         await callback.answer()
-        return False
+        return None
     if callback.from_user is None:
         await callback.answer()
-        return False
+        return None
     if callback.message.chat.type != ChatType.PRIVATE:
         await callback.answer("В группе используйте #выбор_книги", show_alert=True)
-        return False
-    access = await _resolve_access(bot, session, callback.message, callback.from_user.id)
+        return None
+    club = await _club_for_suggest(
+        bot, session, state, callback.message, callback.from_user.id
+    )
+    if club is None:
+        await callback.answer()
+        return None
+    access = await _resolve_access(
+        bot, session, club, callback.message, callback.from_user.id
+    )
     if access.allowed:
-        return True
+        return club
     if state is not None and access.clear_state:
         await state.clear()
     await callback.answer(access.callback_error or access.error or "Нельзя", show_alert=True)
@@ -456,18 +481,36 @@ async def _ensure_can_suggest_callback(
             "Операция остановлена.",
             reply_markup=ReplyKeyboardRemove(),
         )
-    return False
+    return None
+
+
+async def _club_for_suggest(
+    bot: Bot,
+    session: AsyncSession,
+    state: FSMContext | None,
+    message: Message,
+    user_id: int,
+) -> ClubSettings | None:
+    if state is not None:
+        club = await club_from_state(state, session)
+        if club is not None:
+            return club
+    return await require_member_club(
+        message, bot, session, user_id=user_id, prefer_open=True
+    )
 
 
 async def _resolve_access(
     bot: Bot,
     session: AsyncSession,
+    club: ClubSettings,
     message: Message,
     user_id: int,
 ) -> SuggestAccess:
     return await resolve_suggest_access(
         bot,
-        CycleService(session),
+        session,
+        club,
         chat_type=message.chat.type,
         chat_id=message.chat.id,
         user_id=user_id,
@@ -516,7 +559,11 @@ async def _cancel_flow(message: Message, state: FSMContext) -> None:
 
 
 async def _restart_search(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    club_id = data.get("club_id")
     await state.clear()
+    if isinstance(club_id, int):
+        await state.update_data(club_id=club_id)
     await state.set_state(BookSearchStates.waiting_query)
     await message.answer(_ENTER_TITLE, reply_markup=suggest_control_keyboard())
 
@@ -579,12 +626,15 @@ async def _save_pending(
         raise CycleNotOpenError("Не удалось сохранить книгу. Повторите /suggest.")
 
     kind = pending.get("kind")
+    club = await _club_from_data(session, data)
+    if club is None:
+        raise CycleNotOpenError("Не удалось сохранить книгу. Повторите /suggest.")
     if kind == "catalog":
         raw = pending.get("book")
         if not isinstance(raw, dict):
             raise CycleNotOpenError("Не удалось сохранить книгу. Повторите /suggest.")
         schema = BookSchema.model_validate(raw)
-        return await CycleService(session).add_suggestion(user, schema)
+        return await CycleService(session, club).add_suggestion(user, schema)
     if kind == "manual":
         title = pending.get("title")
         if not isinstance(title, str) or not title:
@@ -593,8 +643,12 @@ async def _save_pending(
         description = pending.get("description")
         pages = pending.get("page_count")
         cover_url = pending.get("cover_url")
+        cycle = await CycleService(session, club).get_active_suggesting_cycle()
+        if cycle is None:
+            raise CycleNotOpenError("Предложения ещё не открыты.")
         return await ManualBookService(session).add(
             user,
+            cycle,
             title=title,
             authors=authors if isinstance(authors, str) else None,
             description=description if isinstance(description, str) else None,
@@ -604,13 +658,22 @@ async def _save_pending(
     raise CycleNotOpenError("Не удалось сохранить книгу. Повторите /suggest.")
 
 
+async def _club_from_data(session: AsyncSession, data: dict[str, object]) -> ClubSettings | None:
+    raw = data.get("club_id")
+    if not isinstance(raw, int):
+        return None
+    return await SettingsRepository(session).get(raw)
+
+
 async def _publish_to_group(
     bot: Bot,
     session: AsyncSession,
     book: Book,
     user: User,
+    data: dict[str, object],
 ) -> bool:
-    dest = await DestinationService(session).get_destination()
+    club = await _club_from_data(session, data)
+    dest = None if club is None else destination_of(club)
     if dest is None:
         return False
     try:

@@ -35,3 +35,9 @@ class UserRepository:
         await self.session.refresh(user)
 
         return user
+
+    async def set_active_club(self, user: User, club_id: int | None) -> User:
+        user.active_club_id = club_id
+        await self.session.commit()
+        await self.session.refresh(user)
+        return user

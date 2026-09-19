@@ -4,7 +4,6 @@ from aiogram.types import CallbackQuery, Chat, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.club_chat import is_club_admin
-from app.services.cycle_service import CycleService
 
 
 class AdminFilter(BaseFilter):
@@ -21,7 +20,7 @@ class AdminFilter(BaseFilter):
         chat = _event_chat(event)
         return await is_club_admin(
             bot,
-            CycleService(session),
+            session,
             user.id,
             current_chat_id=None if chat is None else chat.id,
             current_chat_type=None if chat is None else chat.type,

@@ -5,8 +5,10 @@ from aiogram import Bot
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import ChatMemberRestricted
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ClubSettings
+from app.repositories.settings_repo import SettingsRepository
 from app.services.book_card import PHOTO_CAPTION_LIMIT
 from app.services.cycle_service import CycleService
 
@@ -56,21 +58,51 @@ async def club_admin_user_ids(bot: Bot, chat_id: int) -> list[int]:
 
 async def is_club_admin(
     bot: Bot,
-    service: CycleService,
+    session: AsyncSession,
     user_id: int,
     *,
     current_chat_id: int | None,
     current_chat_type: ChatType | str | None,
 ) -> bool:
-    settings = await service.get_settings()
-    if settings.group_chat_id is not None:
-        return await is_chat_admin(bot, settings.group_chat_id, user_id)
-    if current_chat_id is None or current_chat_type is None:
-        return False
-    chat = ChatType(str(current_chat_type))
-    if chat not in {ChatType.GROUP, ChatType.SUPERGROUP}:
-        return False
-    return await is_chat_admin(bot, current_chat_id, user_id)
+    if current_chat_id is not None and current_chat_type is not None:
+        chat = ChatType(str(current_chat_type))
+        if chat in {ChatType.GROUP, ChatType.SUPERGROUP}:
+            return await is_chat_admin(bot, current_chat_id, user_id)
+    clubs = await SettingsRepository(session).list_bound()
+    for club in clubs:
+        if club.group_chat_id is None:
+            continue
+        if await is_chat_admin(bot, club.group_chat_id, user_id):
+            return True
+    return False
+
+
+async def clubs_where_admin(
+    bot: Bot,
+    session: AsyncSession,
+    user_id: int,
+) -> list[ClubSettings]:
+    matches: list[ClubSettings] = []
+    for club in await SettingsRepository(session).list_bound():
+        if club.group_chat_id is None:
+            continue
+        if await is_chat_admin(bot, club.group_chat_id, user_id):
+            matches.append(club)
+    return matches
+
+
+async def clubs_where_member(
+    bot: Bot,
+    session: AsyncSession,
+    user_id: int,
+) -> list[ClubSettings]:
+    matches: list[ClubSettings] = []
+    for club in await SettingsRepository(session).list_bound():
+        if club.group_chat_id is None:
+            continue
+        if await is_club_member(bot, club.group_chat_id, user_id):
+            matches.append(club)
+    return matches
 
 
 async def is_club_member(bot: Bot, chat_id: int, user_id: int) -> bool:
@@ -92,17 +124,17 @@ async def is_club_member(bot: Bot, chat_id: int, user_id: int) -> bool:
 
 async def resolve_suggest_access(
     bot: Bot,
-    service: CycleService,
+    session: AsyncSession,
+    club: ClubSettings | None,
     *,
     chat_type: ChatType | str,
     chat_id: int,
     user_id: int,
     thread_id: int | None,
 ) -> SuggestAccess:
-    settings = await service.get_settings()
     chat = ChatType(str(chat_type))
 
-    if settings.group_chat_id is None:
+    if club is None or club.group_chat_id is None:
         if chat in {ChatType.GROUP, ChatType.SUPERGROUP}:
             return SuggestAccess(
                 False,
@@ -112,17 +144,17 @@ async def resolve_suggest_access(
         return SuggestAccess(False, "Группа клуба ещё не привязана.")
 
     if chat == ChatType.PRIVATE:
-        if not await is_club_member(bot, settings.group_chat_id, user_id):
+        if not await is_club_member(bot, club.group_chat_id, user_id):
             text = "Предлагать книги могут только участники группы клуба."
             return SuggestAccess(False, text)
     elif chat in {ChatType.GROUP, ChatType.SUPERGROUP}:
-        if settings.group_chat_id != chat_id:
+        if club.group_chat_id != chat_id:
             text = "Предлагать книги можно в группе клуба или в личке с ботом."
             return SuggestAccess(False, text)
-        if not _topic_matches(settings.suggest_topic_id, thread_id):
+        if not _topic_matches(club.suggest_topic_id, thread_id):
             return SuggestAccess(
                 False,
-                wrong_topic_text(settings),
+                wrong_topic_text(club),
                 "Предлагайте в топике поиска или в личке с ботом.",
                 clear_state=False,
             )
@@ -130,7 +162,7 @@ async def resolve_suggest_access(
         text = "Предлагать книги можно в группе клуба или в личке с ботом."
         return SuggestAccess(False, text)
 
-    if await service.get_active_suggesting_cycle() is None:
+    if await CycleService(session, club).get_active_suggesting_cycle() is None:
         return SuggestAccess(False, "Предложения ещё не открыты.")
     return SuggestAccess(True)
 

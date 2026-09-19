@@ -9,10 +9,11 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.admin_filter import AdminFilter
+from app.bot.club_context import club_from_state, remember_club, require_admin_club
 from app.bot.club_publish import publish_meeting_invite
 from app.bot.states.meeting import MeetingInviteStates
 from app.core.config import get_settings
-from app.services.club_destination import DestinationService
+from app.services.club_destination import destination_of
 from app.services.cycle_service import CycleService
 from app.services.meeting_invite import (
     InvalidMeetingDateError,
@@ -95,13 +96,18 @@ async def cmd_create_meeting(
     message: Message,
     session: AsyncSession,
     state: FSMContext,
+    bot: Bot,
 ) -> None:
-    dest = await DestinationService(session).get_destination()
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    dest = destination_of(club)
     if dest is None:
         await message.answer("Сначала привяжите группу командой /set_group.")
         return
 
-    book_title, meeting_day = await CycleService(session).get_selected_meeting()
+    await remember_club(state, club)
+    book_title, meeting_day = await CycleService(session, club).get_selected_meeting()
     await _prompt_meeting_step(message, state, meeting_day=meeting_day, book_title=book_title)
 
 
@@ -116,6 +122,7 @@ async def on_meeting_date(
     message: Message,
     session: AsyncSession,
     state: FSMContext,
+    bot: Bot,
 ) -> None:
     if message.text is None:
         return
@@ -129,7 +136,13 @@ async def on_meeting_date(
         await message.answer(_DATE_PAST)
         return
 
-    service = CycleService(session)
+    club = await club_from_state(state, session)
+    if club is None:
+        club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    await remember_club(state, club)
+    service = CycleService(session, club)
     cycle = await service.get_latest_cycle()
     if cycle is not None:
         await service.apply_meeting_date(cycle, meeting_day)
@@ -146,6 +159,7 @@ async def on_meeting_title(
     message: Message,
     session: AsyncSession,
     state: FSMContext,
+    bot: Bot,
 ) -> None:
     title = (message.text or "").strip()
     if not title:
@@ -155,7 +169,12 @@ async def on_meeting_title(
     data = await state.get_data()
     meeting_day = _stored_day(data)
     if meeting_day is None:
-        _, meeting_day = await CycleService(session).get_selected_meeting()
+        club = await club_from_state(state, session)
+        if club is None:
+            club = await require_admin_club(message, bot, session)
+        if club is None:
+            return
+        _, meeting_day = await CycleService(session, club).get_selected_meeting()
     await _prompt_meeting_step(message, state, meeting_day=meeting_day, book_title=title)
 
 
@@ -169,7 +188,13 @@ async def on_meeting_time(
     if message.text is None:
         return
 
-    dest = await DestinationService(session).get_destination()
+    club = await club_from_state(state, session)
+    if club is None:
+        club = await require_admin_club(message, bot, session)
+    if club is None:
+        await state.clear()
+        return
+    dest = destination_of(club)
     if dest is None:
         await state.clear()
         await message.answer("Сначала привяжите группу командой /set_group.")
@@ -179,7 +204,7 @@ async def on_meeting_time(
     meeting_day = _stored_day(data)
     book_title = _stored_title(data)
     if meeting_day is None or book_title is None:
-        cycle_title, cycle_day = await CycleService(session).get_selected_meeting()
+        cycle_title, cycle_day = await CycleService(session, club).get_selected_meeting()
         meeting_day = meeting_day or cycle_day
         book_title = book_title or cycle_title
         if meeting_day is None or book_title is None:

@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.club_chat import resolve_suggest_access
 from app.bot.media import cover_file_id
+from app.repositories.settings_repo import SettingsRepository
 from app.repositories.user_repo import UserRepository
-from app.services.cycle_service import CycleNotOpenError, CycleService
+from app.services.cycle_service import CycleNotOpenError
 from app.services.hashtag_suggest import parse_hashtag_suggestion, suggest_source_text
 from app.services.pending_group_card import PendingGroupCardService
 
@@ -43,9 +44,11 @@ async def on_hashtag_suggestion(
         )
         return
 
+    club = await SettingsRepository(session).get_by_chat_id(message.chat.id)
     access = await resolve_suggest_access(
         bot,
-        CycleService(session),
+        session,
+        club,
         chat_type=message.chat.type,
         chat_id=message.chat.id,
         user_id=sender.id,
@@ -68,8 +71,11 @@ async def on_hashtag_suggestion(
         full_name=sender.full_name,
     )
     try:
+        if club is None:
+            return
         _, created = await PendingGroupCardService(session).upsert_from_post(
             user,
+            club_id=club.id,
             chat_id=message.chat.id,
             message_id=message.message_id,
             raw_text=raw_text,

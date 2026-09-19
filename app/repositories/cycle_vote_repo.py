@@ -13,19 +13,25 @@ class CycleVoteRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def get_latest_voting(self) -> SuggestionCycle | None:
+    async def get_latest_voting(self, club_id: int) -> SuggestionCycle | None:
         result = await self.session.execute(
             select(SuggestionCycle)
-            .where(SuggestionCycle.status == SuggestionCycle.STATUS_VOTING)
+            .where(
+                SuggestionCycle.club_id == club_id,
+                SuggestionCycle.status == SuggestionCycle.STATUS_VOTING,
+            )
             .order_by(SuggestionCycle.opened_at.desc())
             .limit(1)
         )
         return result.scalar_one_or_none()
 
-    async def get_latest_with_winner(self) -> SuggestionCycle | None:
+    async def get_latest_with_winner(self, club_id: int) -> SuggestionCycle | None:
         result = await self.session.execute(
             select(SuggestionCycle)
-            .where(SuggestionCycle.winner_book_id.is_not(None))
+            .where(
+                SuggestionCycle.club_id == club_id,
+                SuggestionCycle.winner_book_id.is_not(None),
+            )
             .options(selectinload(SuggestionCycle.winner))
             .order_by(SuggestionCycle.opened_at.desc())
             .limit(1)

@@ -14,41 +14,66 @@ class ClubDestination:
     message_thread_id: int | None = None
 
 
+def club_label(club: ClubSettings, *, limit: int | None = None) -> str:
+    if club.title and club.title.strip():
+        raw = club.title.strip()
+    elif club.group_chat_id is not None:
+        raw = f"группа {club.group_chat_id}"
+    else:
+        raw = f"клуб {club.id}"
+    if limit is None or len(raw) <= limit:
+        return raw
+    if limit <= 1:
+        return raw[:limit]
+    return raw[: limit - 1] + "…"
+
+
+def destination_of(club: ClubSettings) -> ClubDestination | None:
+    if club.group_chat_id is None:
+        return None
+    return ClubDestination(
+        chat_id=club.group_chat_id,
+        message_thread_id=club.suggest_topic_id,
+    )
+
+
+def select_club(
+    clubs: list[ClubSettings],
+    *,
+    active_id: int | None,
+    prefer_ids: list[int] | None = None,
+) -> ClubSettings | None:
+    by_id = {club.id: club for club in clubs}
+    if active_id is not None and active_id in by_id:
+        return by_id[active_id]
+    if len(clubs) == 1:
+        return clubs[0]
+    if prefer_ids is not None:
+        preferred = [club for club in clubs if club.id in prefer_ids]
+        if len(preferred) == 1:
+            return preferred[0]
+    return None
+
+
 class DestinationService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, club: ClubSettings) -> None:
         self.settings_repo = SettingsRepository(session)
+        self.club = club
 
     async def bind_suggest_topic(self, chat_id: int, thread_id: int) -> ClubSettings:
-        settings = await self.settings_repo.get_or_create()
-        if settings.group_chat_id is None:
+        if self.club.group_chat_id is None:
             raise GroupNotSetError("Сначала привяжите группу командой /set_group.")
-        if settings.group_chat_id != chat_id:
+        if self.club.group_chat_id != chat_id:
             raise GroupNotSetError("Сначала привяжите эту группу командой /set_group.")
-        settings.suggest_topic_id = thread_id
-        return await self.settings_repo.save(settings)
+        self.club.suggest_topic_id = thread_id
+        return await self.settings_repo.save(self.club)
 
     async def clear_suggest_topic(self) -> ClubSettings:
-        settings = await self.settings_repo.get_or_create()
-        settings.suggest_topic_id = None
-        return await self.settings_repo.save(settings)
+        self.club.suggest_topic_id = None
+        return await self.settings_repo.save(self.club)
 
-    async def clear_topic_if_group_changed(
-        self,
-        previous_group_id: int | None,
-        chat_id: int,
-    ) -> None:
-        if previous_group_id == chat_id:
-            return
-        await self.clear_suggest_topic()
-
-    async def get_destination(self) -> ClubDestination | None:
-        settings = await self.settings_repo.get_or_create()
-        if settings.group_chat_id is None:
-            return None
-        return ClubDestination(
-            chat_id=settings.group_chat_id,
-            message_thread_id=settings.suggest_topic_id,
-        )
+    def get_destination(self) -> ClubDestination | None:
+        return destination_of(self.club)
 
 
 def suggestion_announcement_text(month: int) -> str:

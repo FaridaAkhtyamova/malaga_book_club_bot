@@ -9,6 +9,7 @@ from app.bot.handlers.admin import router as admin_router
 from app.bot.handlers.base import router as base_router
 from app.bot.handlers.books import router as books_router
 from app.bot.handlers.club_setup import router as club_setup_router
+from app.bot.handlers.clubs import router as clubs_router
 from app.bot.handlers.cycle_open import router as cycle_open_router
 from app.bot.handlers.group_card_review import router as group_card_review_router
 from app.bot.handlers.group_suggest import router as group_suggest_router
@@ -30,8 +31,13 @@ async def main() -> None:
     if settings.DEBUG:
         logging.warning("DEBUG mode is on: /open_suggestions can reset the current month")
     async with AsyncSessionLocal() as session:
-        club_settings = await SettingsRepository(session).get_or_create()
-        await setup_bot_commands(bot, club_settings.group_chat_id)
+        repo = SettingsRepository(session)
+        await repo.ensure_env_group()
+        clubs = await repo.list_bound()
+        await setup_bot_commands(
+            bot,
+            [club.group_chat_id for club in clubs if club.group_chat_id is not None],
+        )
     dp = Dispatcher(storage=MemoryStorage())
 
     # Outer middleware so session is available to router-level filters (e.g. AdminFilter).
@@ -42,6 +48,7 @@ async def main() -> None:
     dp.include_router(admin_router)
     dp.include_router(group_card_review_router)
     dp.include_router(group_suggest_router)
+    dp.include_router(clubs_router)
     dp.include_router(base_router)
     dp.include_router(books_router)
 

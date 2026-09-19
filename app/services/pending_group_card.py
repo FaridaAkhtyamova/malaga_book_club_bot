@@ -37,13 +37,14 @@ class PendingGroupCardService:
         self,
         user: User,
         *,
+        club_id: int,
         chat_id: int,
         message_id: int,
         raw_text: str,
         parsed: HashtagSuggestion | None,
         cover_url: str | None = None,
     ) -> tuple[PendingGroupCard, bool]:
-        cycle = await self.cycle_repo.get_latest_suggesting()
+        cycle = await self.cycle_repo.get_latest_suggesting(club_id)
         if cycle is None:
             raise CycleNotOpenError("Предложения ещё не открыты.")
 
@@ -125,8 +126,13 @@ class PendingGroupCardService:
         if claimed is None:
             raise PendingCardNotFoundError("Эта карточка уже разобрана или не найдена.")
 
+        cycle = await self.cycle_repo.get(claimed.cycle_id)
+        if cycle is None:
+            raise CycleNotOpenError("Предложения ещё не открыты.")
+
         _, created = await ManualBookService(self.session).add(
             user,
+            cycle,
             title=claimed.title or "",
             authors=claimed.authors,
             description=claimed.description,

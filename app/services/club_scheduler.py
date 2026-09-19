@@ -12,7 +12,8 @@ from app.bot.club_publish import (
 )
 from app.core.config import get_settings
 from app.core.db import AsyncSessionLocal
-from app.services.club_destination import DestinationService, suggestion_announcement_text
+from app.repositories.settings_repo import SettingsRepository
+from app.services.club_destination import destination_of, suggestion_announcement_text
 from app.services.cycle_service import (
     MONTH_NAMES_RU,
     CycleService,
@@ -44,27 +45,31 @@ async def run_scheduled_jobs(bot: Bot) -> None:
     settings = get_settings()
     now = datetime.now(ZoneInfo(settings.TIMEZONE))
     async with AsyncSessionLocal() as session:
-        service = CycleService(session)
-        action = await service.run_scheduled(now)
-        if action is None:
-            return
-
-        dest = await DestinationService(session).get_destination()
-        if dest is None:
-            return
-
-        try:
-            if isinstance(action, ScheduledAnnounce):
-                text = _announcement_from_scheduled(action.text)
-                await publish_club_announcement(bot, dest, text)
-            elif isinstance(action, ScheduledPendingReview):
-                await send_pending_card_reviews(bot, action.cards, session)
-            elif isinstance(action, ScheduledVote):
-                published = await publish_vote_polls(bot, dest, action.cycle, action.chunks)
-                await service.record_vote_polls(action.cycle, published)
-                await service.mark_voting(action.cycle)
-        except Exception:
-            logger.exception("Failed to publish scheduled club message")
+        clubs = await SettingsRepository(session).list_bound()
+        for club in clubs:
+            dest = destination_of(club)
+            if dest is None:
+                continue
+            service = CycleService(session, club)
+            try:
+                action = await service.run_scheduled(now)
+            except Exception:
+                logger.exception("Failed scheduled cycle for club %s", club.id)
+                continue
+            if action is None:
+                continue
+            try:
+                if isinstance(action, ScheduledAnnounce):
+                    text = _announcement_from_scheduled(action.text)
+                    await publish_club_announcement(bot, dest, text)
+                elif isinstance(action, ScheduledPendingReview):
+                    await send_pending_card_reviews(bot, action.cards, session)
+                elif isinstance(action, ScheduledVote):
+                    published = await publish_vote_polls(bot, dest, action.cycle, action.chunks)
+                    await service.record_vote_polls(action.cycle, published)
+                    await service.mark_voting(action.cycle)
+            except Exception:
+                logger.exception("Failed to publish scheduled club message for club %s", club.id)
 
 
 def _announcement_from_scheduled(text: str) -> str:

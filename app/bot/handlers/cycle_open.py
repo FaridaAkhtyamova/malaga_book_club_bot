@@ -6,8 +6,9 @@ from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.admin_filter import AdminFilter
+from app.bot.club_context import require_admin_club
 from app.bot.club_publish import publish_club_announcement
-from app.services.club_destination import DestinationService, suggestion_announcement_text
+from app.services.club_destination import destination_of, suggestion_announcement_text
 from app.services.cycle_open import CycleOpenService
 from app.services.cycle_service import CycleAlreadyOpenError, GroupNotSetError, month_name_ru
 
@@ -21,9 +22,12 @@ async def cmd_open_suggestions(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
     try:
-        cycle, _, should_announce = await CycleOpenService(session).open_or_reopen()
-        dest = await DestinationService(session).get_destination()
+        cycle, _, should_announce = await CycleOpenService(session, club).open_or_reopen()
+        dest = destination_of(club)
     except GroupNotSetError as exc:
         await message.answer(str(exc))
         return

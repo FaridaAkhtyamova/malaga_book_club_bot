@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.admin_filter import AdminFilter
 from app.bot.callbacks.pending_card import PendingCardCallback
+from app.bot.club_chat import is_chat_admin
 from app.bot.media import cover_file_id
 from app.bot.states.pending_card import PendingCardStates
 from app.db.models import PendingGroupCard
@@ -43,12 +44,17 @@ async def on_pending_card(
 ) -> None:
     service = PendingGroupCardService(session)
     message = callback.message if isinstance(callback.message, Message) else None
+    try:
+        card = await service.get_pending(callback_data.card_id)
+    except PendingCardNotFoundError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    if callback.from_user is None or not await is_chat_admin(
+        bot, card.chat_id, callback.from_user.id
+    ):
+        await callback.answer("Эта карточка из другой группы.", show_alert=True)
+        return
     if callback_data.action == "edit":
-        try:
-            card = await service.get_pending(callback_data.card_id)
-        except PendingCardNotFoundError as exc:
-            await callback.answer(str(exc), show_alert=True)
-            return
         await state.update_data(pending_card_id=card.id)
         await state.set_state(PendingCardStates.waiting_title)
         if message is not None:
