@@ -38,6 +38,8 @@ from app.services.manual_book import ManualBookService
 
 logger = logging.getLogger(__name__)
 router = Router()
+router.message.filter(F.chat.type == ChatType.PRIVATE)
+router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
 
 _SKIP = "-"
 _KEEP_QUERY = "."

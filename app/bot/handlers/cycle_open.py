@@ -1,4 +1,5 @@
-from aiogram import Bot, Router
+from aiogram import Bot, F, Router
+from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -11,7 +12,7 @@ from app.services.cycle_open import CycleOpenService
 from app.services.cycle_service import CycleAlreadyOpenError, GroupNotSetError, month_name_ru
 
 router = Router()
-router.message.filter(AdminFilter())
+router.message.filter(AdminFilter(), F.chat.type == ChatType.PRIVATE)
 
 
 @router.message(Command("open_suggestions"))

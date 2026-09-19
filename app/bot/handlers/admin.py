@@ -1,4 +1,5 @@
-from aiogram import Router
+from aiogram import F, Router
+from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,7 +8,7 @@ from app.bot.admin_filter import AdminFilter
 from app.services.cycle_service import CycleService, InvalidDayError
 
 router = Router()
-router.message.filter(AdminFilter())
+router.message.filter(AdminFilter(), F.chat.type == ChatType.PRIVATE)
 
 
 @router.message(Command("set_suggest_day"))

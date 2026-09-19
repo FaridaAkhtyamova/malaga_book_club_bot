@@ -4,6 +4,7 @@ from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import (
     BotCommand,
+    BotCommandScopeAllGroupChats,
     BotCommandScopeChat,
     BotCommandScopeChatAdministrators,
     BotCommandScopeDefault,
@@ -25,13 +26,14 @@ class CommandInfo:
     menu_description: str
     help_line: str
     admin: bool = False
+    group_setup: bool = False
 
 
 COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "start",
         "Приветствие и как предложить книгу",
-        "/start — приветствие и как предложить книгу",
+        "/start — приветствие и как предложить книгу (личка с ботом)",
     ),
     CommandInfo("help", "Список команд", "/help — это сообщение"),
     CommandInfo(
@@ -50,13 +52,15 @@ COMMANDS: tuple[CommandInfo, ...] = (
         "Привязать эту группу как клубную",
         "/set_group — запомнить эту группу как клубную (только из группы)",
         admin=True,
+        group_setup=True,
     ),
     CommandInfo(
         "set_suggest_topic",
         "Привязать топик предложений",
         "/set_suggest_topic — привязать топик предложений (вызвать из ветки)\n"
-        "/set_suggest_topic clear — сбросить топик",
+        "/set_suggest_topic clear — сбросить топик (личка с ботом)",
         admin=True,
+        group_setup=True,
     ),
     CommandInfo(
         "set_suggest_day",
@@ -131,11 +135,12 @@ COMMANDS: tuple[CommandInfo, ...] = (
 )
 
 
-def _menu_commands(*, admin: bool | None) -> list[BotCommand]:
+def _menu_commands(*, admin: bool | None, group_setup: bool | None = None) -> list[BotCommand]:
     return [
         BotCommand(command=item.command, description=item.menu_description)
         for item in COMMANDS
-        if admin is None or item.admin is admin
+        if (admin is None or item.admin is admin)
+        and (group_setup is None or item.group_setup is group_setup)
     ]
 
 
@@ -147,12 +152,22 @@ def admin_bot_commands() -> list[BotCommand]:
     return _menu_commands(admin=None)
 
 
+def group_setup_bot_commands() -> list[BotCommand]:
+    return _menu_commands(admin=True, group_setup=True)
+
+
 def admin_command_names() -> tuple[str, ...]:
     return tuple(item.command for item in COMMANDS if item.admin)
 
 
 def format_help(*, is_admin: bool) -> str:
-    lines = ["Команды для всех:", ""]
+    lines = [
+        "Команды пишите в личке с ботом.",
+        "В группе бот только публикует анонсы, опросы, карточки и приглашения.",
+        "",
+        "Команды для всех:",
+        "",
+    ]
     lines.extend(item.help_line for item in COMMANDS if not item.admin)
     lines.extend(["", _HASHTAG_HINT])
     if not is_admin:
@@ -162,21 +177,21 @@ def format_help(*, is_admin: bool) -> str:
     lines.extend(item.help_line for item in COMMANDS if item.admin)
     lines.append("")
     lines.append(
-        "Админские команды можно писать в группе или в личке с ботом "
-        "(кроме /set_group и /set_suggest_topic)."
+        "Админские команды — тоже в личке. "
+        "Исключения: /set_group и /set_suggest_topic — только из группы."
     )
     return "\n".join(lines)
 
 
 async def setup_bot_commands(bot: Bot, club_chat_id: int | None = None) -> None:
     await bot.set_my_commands(member_bot_commands(), scope=BotCommandScopeDefault())
+    await bot.set_my_commands([], scope=BotCommandScopeAllGroupChats())
     if club_chat_id is None:
         return
 
-    admin_commands = admin_bot_commands()
     try:
         await bot.set_my_commands(
-            admin_commands,
+            group_setup_bot_commands(),
             scope=BotCommandScopeChatAdministrators(chat_id=club_chat_id),
         )
     except TelegramBadRequest:
@@ -184,7 +199,7 @@ async def setup_bot_commands(bot: Bot, club_chat_id: int | None = None) -> None:
     for admin_id in await club_admin_user_ids(bot, club_chat_id):
         try:
             await bot.set_my_commands(
-                admin_commands,
+                admin_bot_commands(),
                 scope=BotCommandScopeChat(chat_id=admin_id),
             )
         except TelegramBadRequest:

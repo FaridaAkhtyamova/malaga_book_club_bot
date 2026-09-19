@@ -1,4 +1,5 @@
-from aiogram import Bot, Router
+from aiogram import Bot, F, Router
+from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
@@ -12,6 +13,7 @@ from app.repositories.user_repo import UserRepository
 from app.services.cycle_service import CycleService
 
 router = Router()
+router.message.filter(F.chat.type == ChatType.PRIVATE)
 
 _ADMIN_ONLY = "Эта команда доступна только админу клуба."
 

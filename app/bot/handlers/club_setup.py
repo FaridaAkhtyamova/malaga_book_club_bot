@@ -53,6 +53,8 @@ from app.services.vote_close import VoteCounts, winner_announcement
 
 router = Router()
 router.message.filter(AdminFilter())
+dm_router = Router()
+dm_router.message.filter(F.chat.type == ChatType.PRIVATE)
 
 _CLEAR_TOPIC = frozenset({"clear", "off", "none", "сброс"})
 _MEETING_POLL_STATES = StateFilter(MeetingPollStates)
@@ -87,7 +89,10 @@ async def cmd_set_suggest_topic(
     arg = (command.args or "").strip().casefold()
     if arg in _CLEAR_TOPIC:
         await dest_service.clear_suggest_topic()
-        await message.answer("Топик предложений сброшен. Можно предлагать в любом месте группы.")
+        if message.chat.type == ChatType.PRIVATE:
+            await message.answer(
+                "Топик предложений сброшен. Можно предлагать в любом месте группы."
+            )
         return
 
     if message.chat.type not in {ChatType.GROUP, ChatType.SUPERGROUP}:
@@ -113,7 +118,7 @@ async def cmd_set_suggest_topic(
     await message.answer(f"Топик предложений привязан (id {settings.suggest_topic_id}).")
 
 
-@router.message(Command("start_vote"))
+@dm_router.message(Command("start_vote"))
 async def cmd_start_vote(
     message: Message,
     session: AsyncSession,
@@ -156,7 +161,7 @@ async def cmd_start_vote(
         await message.answer("Опросы опубликованы в группе.")
 
 
-@router.message(Command("close_vote"))
+@dm_router.message(Command("close_vote"))
 async def cmd_close_vote(
     message: Message,
     session: AsyncSession,
@@ -246,7 +251,7 @@ async def cmd_close_vote(
         await message.answer("Ничья. Второй тур опубликован в группе.")
 
 
-@router.message(Command("reset_vote"))
+@dm_router.message(Command("reset_vote"))
 async def cmd_reset_vote(
     message: Message,
     session: AsyncSession,
@@ -289,7 +294,7 @@ async def cmd_reset_vote(
     )
 
 
-@router.message(Command("start_meeting_poll"))
+@dm_router.message(Command("start_meeting_poll"))
 async def cmd_start_meeting_poll(
     message: Message,
     session: AsyncSession,
@@ -318,13 +323,13 @@ async def cmd_start_meeting_poll(
     await _finish_meeting_poll(message, bot, dest, service, cycle, meeting_subject(cycle, book))
 
 
-@router.message(Command("cancel"), _MEETING_POLL_STATES)
+@dm_router.message(Command("cancel"), _MEETING_POLL_STATES)
 async def cmd_cancel_meeting_poll(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer(_POLL_CANCELLED)
 
 
-@router.message(
+@dm_router.message(
     MeetingPollStates.waiting_title,
     F.text,
     ~F.text.startswith("/"),
@@ -359,7 +364,7 @@ async def on_meeting_poll_title(
     await _finish_meeting_poll(message, bot, dest, service, cycle, meeting_subject(cycle, book))
 
 
-@router.message(Command("close_meeting_poll"))
+@dm_router.message(Command("close_meeting_poll"))
 async def cmd_close_meeting_poll(
     message: Message,
     session: AsyncSession,
@@ -441,7 +446,7 @@ async def cmd_close_meeting_poll(
         await message.answer("Ничья. Второй тур по датам опубликован в группе.")
 
 
-@router.message(Command("cycle_status"))
+@dm_router.message(Command("cycle_status"))
 async def cmd_cycle_status(message: Message, session: AsyncSession) -> None:
     service = CycleService(session)
     settings = await service.get_settings()
@@ -481,7 +486,7 @@ async def cmd_cycle_status(message: Message, session: AsyncSession) -> None:
     await message.answer("\n".join(lines))
 
 
-@router.message(Command("month_book"))
+@dm_router.message(Command("month_book"))
 async def cmd_month_book(message: Message, session: AsyncSession, bot: Bot) -> None:
     service = CycleService(session)
     try:
@@ -547,3 +552,6 @@ async def _publish_and_record_meeting_poll(
         return False
     await service.record_meeting_poll(cycle, published)
     return True
+
+
+router.include_router(dm_router)

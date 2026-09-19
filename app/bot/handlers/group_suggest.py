@@ -4,7 +4,7 @@ import logging
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
-from aiogram.filters import BaseFilter, Command
+from aiogram.filters import BaseFilter
 from aiogram.types import Message, User
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +12,7 @@ from app.bot.club_chat import resolve_suggest_access
 from app.bot.media import cover_file_id
 from app.repositories.user_repo import UserRepository
 from app.services.cycle_service import CycleNotOpenError, CycleService
-from app.services.hashtag_suggest import GROUP_HINT, parse_hashtag_suggestion, suggest_source_text
+from app.services.hashtag_suggest import parse_hashtag_suggestion, suggest_source_text
 from app.services.pending_group_card import PendingGroupCardService
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,6 @@ router = Router()
 
 # Group Anonymous Bot / Channel comment bot — not our book bot.
 _ALLOWED_TELEGRAM_BOTS = frozenset({1087968824, 136817688})
-_QUEUED = "Карточка уйдёт админу перед голосованием."
 
 
 class ClubHashtagFilter(BaseFilter):
@@ -53,8 +52,11 @@ async def on_hashtag_suggestion(
         thread_id=message.message_thread_id,
     )
     if not access.allowed:
-        if access.error:
-            await message.reply(access.error)
+        logger.info(
+            "Skip group hashtag: access denied chat_id=%s message_id=%s",
+            message.chat.id,
+            message.message_id,
+        )
         return
 
     raw_text = suggest_source_text(message.text, message.caption) or ""
@@ -75,11 +77,19 @@ async def on_hashtag_suggestion(
             cover_url=cover_file_id(message),
         )
     except CycleNotOpenError:
-        await message.reply("Предложения ещё не открыты.")
+        logger.info(
+            "Skip group hashtag: cycle not open chat_id=%s message_id=%s",
+            message.chat.id,
+            message.message_id,
+        )
         return
 
     if created:
-        await message.reply(_QUEUED)
+        logger.info(
+            "Queued group card chat_id=%s message_id=%s",
+            message.chat.id,
+            message.message_id,
+        )
 
 
 def _club_sender(message: Message) -> User | None:
@@ -89,8 +99,3 @@ def _club_sender(message: Message) -> User | None:
     if user.is_bot and user.id not in _ALLOWED_TELEGRAM_BOTS:
         return None
     return user
-
-
-@router.message(Command("suggest"), F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}))
-async def cmd_suggest_in_group(message: Message) -> None:
-    await message.answer(GROUP_HINT)

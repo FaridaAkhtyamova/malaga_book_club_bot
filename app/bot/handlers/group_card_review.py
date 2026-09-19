@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import suppress
 
 from aiogram import Bot, F, Router
+from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -22,8 +23,8 @@ from app.services.pending_group_card import (
 )
 
 router = Router()
-router.message.filter(AdminFilter())
-router.callback_query.filter(AdminFilter())
+router.message.filter(AdminFilter(), F.chat.type == ChatType.PRIVATE)
+router.callback_query.filter(AdminFilter(), F.message.chat.type == ChatType.PRIVATE)
 
 _SKIP = "-"
 _KEEP = "."

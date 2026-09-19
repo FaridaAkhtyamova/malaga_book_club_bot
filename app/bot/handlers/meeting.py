@@ -2,6 +2,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
+from aiogram.enums import ChatType
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
@@ -25,7 +26,7 @@ from app.services.meeting_invite import (
 from app.services.meeting_poll import format_meeting_day
 
 router = Router()
-router.message.filter(AdminFilter())
+router.message.filter(AdminFilter(), F.chat.type == ChatType.PRIVATE)
 
 _MEETING_STATES = StateFilter(MeetingInviteStates)
 _ASK_DATE = "Дата встречи ещё не выбрана. Напишите её как 25.09 или 25.09.2026."

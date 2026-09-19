@@ -3,7 +3,7 @@
 ## 1. Project Overview
 Async Telegram bot for a local book club in Malaga. Portfolio piece: layered architecture, async-first Python, Alembic, Docker.
 
-The bot lives in the club group and in private chat. On a scheduled (or admin) day it opens book suggestions for the **next** month. Members propose titles via `#выбор_книги` in the group or `/suggest` in DM. Later the bot publishes non-anonymous Telegram polls, can run a runoff on a tie, then a meeting-date poll and a calendar invite (`.ics`).
+The bot lives in the club group and in private chat. It posts announcements, polls, book cards, and calendar invites to the group, but does not reply there. Conversation (commands, `/suggest`, admin flow) is DM-only, except one-time `/set_group` and `/set_suggest_topic` which must be invoked in the group. On a scheduled (or admin) day it opens book suggestions for the **next** month. Members propose titles via `#выбор_книги` in the group or `/suggest` in DM. Later the bot publishes non-anonymous Telegram polls, can run a runoff on a tie, then a meeting-date poll and a calendar invite (`.ics`).
 
 ## 2. Tech Stack
 - **Language:** Python 3.12+ (`mypy` strict, `ruff`)
@@ -51,8 +51,8 @@ book_club_bot/
 - `Meeting`, `Vote`, `RSVP` — leftover from an earlier design; not used by the current cycle
 
 ## 5. Features (current)
-- `/start` registers the user; `/start suggest` opens the DM suggest flow; `/help` lists commands
-- Group: `#выбор_книги` card (title, author; pages from «стр»/«страниц»; suggester from Telegram user); stored for admin review, then included in `/start_vote`
+- `/start` is DM-only: registers the user and explains how to suggest; `/start suggest` opens the DM suggest flow; `/help` lists commands. Commands other than `/set_group` and `/set_suggest_topic` are ignored in the group
+- Group: `#выбор_книги` card (title, author; pages from «стр»/«страниц»; suggester from Telegram user); stored silently for admin review, then included in `/start_vote`. The bot does not reply to the card in the group
 - DM: `/suggest` → Google Books (`intitle` / `printType=books`, then full-text if thin), then Open Library; results are deduped and ranked by title/author match; manual add; confirm before posting the card to the group/topic
 - Admin: `/set_group`, `/set_suggest_topic`, `/set_suggest_day`, `/set_vote_day`, `/open_suggestions`, `/start_vote`, `/close_vote`, `/reset_vote`, `/start_meeting_poll`, `/close_meeting_poll`, `/create_meeting`, `/cycle_status`, `/month_book`
 - `/close_vote` with a single winner also publishes the meeting-date poll; `/start_meeting_poll` works without a closed book vote and asks the admin for a title if none is stored
