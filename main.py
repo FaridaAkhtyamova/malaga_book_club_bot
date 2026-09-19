@@ -34,10 +34,8 @@ async def main() -> None:
         await setup_bot_commands(bot, club_settings.group_chat_id)
     dp = Dispatcher(storage=MemoryStorage())
 
-    db_middleware = DbSessionMiddleware()
-    dp.message.middleware(db_middleware)
-    dp.edited_message.middleware(db_middleware)
-    dp.callback_query.middleware(db_middleware)
+    # Outer middleware so session is available to router-level filters (e.g. AdminFilter).
+    dp.update.outer_middleware(DbSessionMiddleware())
     dp.include_router(cycle_open_router)
     dp.include_router(club_setup_router)
     dp.include_router(meeting_router)
