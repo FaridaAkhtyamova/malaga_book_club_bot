@@ -1,3 +1,5 @@
+from app.bot.club_context import format_clubs_list
+from app.bot.commands import format_help, member_bot_commands
 from app.db.models import ClubSettings
 from app.services.club_destination import club_label, select_club
 
@@ -47,3 +49,30 @@ def test_club_label_falls_back_to_chat_id() -> None:
 def test_club_label_truncates_for_buttons() -> None:
     long_title = "К" * 80
     assert club_label(_club(1, long_title), limit=64) == "К" * 63 + "…"
+
+
+def test_clubs_list_single_group_has_no_catalog() -> None:
+    text = format_clubs_list([_club(1, "Малага")], active_id=1)
+    assert "Ваши клубы" not in text
+    assert "Малага" in text
+
+
+def test_clubs_list_many_asks_to_pick_group() -> None:
+    text = format_clubs_list([_club(1, "A"), _club(2, "B")], active_id=2)
+    assert "Выберите, с какой группой работать в личке" in text
+    assert "B ✓" in text
+
+
+def test_member_help_omits_clubs() -> None:
+    text = format_help(is_admin=False)
+    assert "/clubs" not in text
+    assert "/suggest" in text
+    assert "/open_suggestions" not in text
+    assert all(cmd.command != "clubs" for cmd in member_bot_commands())
+
+
+def test_admin_help_includes_member_admin_and_clubs() -> None:
+    text = format_help(is_admin=True)
+    assert "/suggest" in text
+    assert "/open_suggestions" in text
+    assert "/clubs" in text

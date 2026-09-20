@@ -11,14 +11,13 @@ from app.db.models import ClubSettings, User
 from app.repositories.settings_repo import SettingsRepository
 from app.repositories.user_repo import UserRepository
 from app.services.club_destination import club_label, select_club
-from app.services.cycle_service import CycleService
 
-_PICK_ADMIN = "Вы в нескольких клубах. Выберите клуб и повторите команду."
-_PICK_SUGGEST = "Вы в нескольких клубах. В какой предложить книгу?"
+_PICK_ADMIN = "Вы в нескольких группах. Выберите, с какой работать в личке, и повторите команду."
+_PICK_SUGGEST = "Вы в нескольких группах. Выберите, с какой работать в личке."
 _NO_MEMBER_CLUB = "Предлагать книги могут только участники группы клуба."
 _NO_ADMIN_CLUB = "Сначала привяжите группу командой /set_group."
-_CLUB_CHOSEN = "Клуб выбран: {name}."
-_CLUB_CHOSEN_RETRY = "Клуб выбран: {name}. Повторите команду."
+_CLUB_CHOSEN = "Группа: {name}."
+_CLUB_CHOSEN_RETRY = "Группа: {name}. Повторите команду."
 
 
 async def require_admin_club(
@@ -50,7 +49,6 @@ async def require_member_club(
     session: AsyncSession,
     *,
     user_id: int | None = None,
-    prefer_open: bool = False,
     pick_action: str = "suggest",
 ) -> ClubSettings | None:
     actor_id = user_id if user_id is not None else (
@@ -62,10 +60,7 @@ async def require_member_club(
     if not clubs:
         await message.answer(_NO_MEMBER_CLUB)
         return None
-    prefer_ids = (
-        await _open_suggesting_ids(session, clubs) if prefer_open else None
-    )
-    chosen = await _resolve_club(session, actor_id, clubs, prefer_ids=prefer_ids)
+    chosen = await _resolve_club(session, actor_id, clubs)
     if chosen is not None:
         return chosen
     await message.answer(
@@ -126,7 +121,7 @@ async def load_picked_club(
         clubs[club.id] = club
     picked = clubs.get(club_id)
     if picked is None:
-        await callback.answer("Этот клуб больше недоступен.", show_alert=True)
+        await callback.answer("Эта группа больше недоступна.", show_alert=True)
         return None
     await set_active_club(
         session,
@@ -144,14 +139,13 @@ def format_clubs_list(
     active_id: int | None,
 ) -> str:
     if not clubs:
-        return "Пока нет доступных клубов."
-    lines = ["Ваши клубы:"]
+        return "Нет группы, с которой можно работать в личке."
+    if len(clubs) == 1:
+        return f"В личке используется группа {club_label(clubs[0])}."
+    lines = ["Выберите, с какой группой работать в личке:"]
     for club in clubs:
         mark = " ✓" if club.id == active_id else ""
         lines.append(f"• {club_label(club)}{mark}")
-    if len(clubs) > 1:
-        lines.append("")
-        lines.append("Нажмите, чтобы выбрать клуб для команд в личке.")
     return "\n".join(lines)
 
 
@@ -159,12 +153,10 @@ async def _resolve_club(
     session: AsyncSession,
     user_id: int,
     clubs: list[ClubSettings],
-    *,
-    prefer_ids: list[int] | None = None,
 ) -> ClubSettings | None:
     user = await UserRepository(session).get_by_id(user_id)
     active_id = None if user is None else user.active_club_id
-    chosen = select_club(clubs, active_id=active_id, prefer_ids=prefer_ids)
+    chosen = select_club(clubs, active_id=active_id)
     if chosen is None:
         return None
     if user is None or user.active_club_id != chosen.id:
@@ -172,15 +164,3 @@ async def _resolve_club(
             user = await UserRepository(session).get_or_create_user(user_id, None, None)
         await UserRepository(session).set_active_club(user, chosen.id)
     return chosen
-
-
-async def _open_suggesting_ids(
-    session: AsyncSession,
-    clubs: Sequence[ClubSettings],
-) -> list[int]:
-    open_ids: list[int] = []
-    for club in clubs:
-        cycle = await CycleService(session, club).get_active_suggesting_cycle()
-        if cycle is not None:
-            open_ids.append(club.id)
-    return open_ids

@@ -29,6 +29,7 @@ class CommandInfo:
     help_line: str
     admin: bool = False
     group_setup: bool = False
+    hidden: bool = False
 
 
 COMMANDS: tuple[CommandInfo, ...] = (
@@ -46,8 +47,9 @@ COMMANDS: tuple[CommandInfo, ...] = (
     ),
     CommandInfo(
         "clubs",
-        "Список клубов и переключение",
-        "/clubs — список групп, к которым есть доступ, и выбор клуба для команд в личке",
+        "Переключить группу в личке",
+        "/clubs — переключить группу в личке, если вы состоите в нескольких",
+        hidden=True,
     ),
     CommandInfo(
         "cancel",
@@ -57,8 +59,7 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "set_group",
         "Привязать эту группу как клубную",
-        "/set_group — запомнить эту группу как клубную (только из группы; "
-        "каждая группа — отдельный клуб)",
+        "/set_group — запомнить эту группу как клубную (только из группы)",
         admin=True,
         group_setup=True,
     ),
@@ -131,7 +132,7 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "cycle_status",
         "Текущие настройки и цикл",
-        "/cycle_status — клуб, топик, дни, месяц и сколько книг уже предложено",
+        "/cycle_status — группа, топик, дни, месяц и сколько книг уже предложено",
         admin=True,
     ),
     CommandInfo(
@@ -147,7 +148,8 @@ def _menu_commands(*, admin: bool | None, group_setup: bool | None = None) -> li
     return [
         BotCommand(command=item.command, description=item.menu_description)
         for item in COMMANDS
-        if (admin is None or item.admin is admin)
+        if not item.hidden
+        and (admin is None or item.admin is admin)
         and (group_setup is None or item.group_setup is group_setup)
     ]
 
@@ -176,17 +178,19 @@ def format_help(*, is_admin: bool) -> str:
         "Команды для всех:",
         "",
     ]
-    lines.extend(item.help_line for item in COMMANDS if not item.admin)
+    lines.extend(
+        item.help_line for item in COMMANDS if not item.admin and not item.hidden
+    )
     lines.extend(["", _HASHTAG_HINT])
     if not is_admin:
         return "\n".join(lines)
 
     lines.extend(["", "Команды для админа:", ""])
     lines.extend(item.help_line for item in COMMANDS if item.admin)
+    lines.extend(item.help_line for item in COMMANDS if item.hidden)
     lines.append("")
     lines.append(
-        "Админские команды — тоже в личке и относятся к выбранному клубу "
-        "(/clubs, если групп несколько). "
+        "Админские команды — тоже в личке. "
         "Исключения: /set_group и /set_suggest_topic — только из группы."
     )
     return "\n".join(lines)

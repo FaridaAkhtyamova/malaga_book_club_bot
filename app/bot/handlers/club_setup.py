@@ -509,7 +509,7 @@ async def cmd_cycle_status(message: Message, session: AsyncSession, bot: Bot) ->
     vote_day = str(settings.vote_day) if settings.vote_day is not None else "не задан"
 
     lines = [
-        f"Клуб: {group}",
+        f"Группа: {group}",
         f"Топик предложений: {topic}",
         f"День предложений: {suggest_day}",
         f"День голосования: {vote_day}",

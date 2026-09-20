@@ -495,9 +495,7 @@ async def _club_for_suggest(
         club = await club_from_state(state, session)
         if club is not None:
             return club
-    return await require_member_club(
-        message, bot, session, user_id=user_id, prefer_open=True
-    )
+    return await require_member_club(message, bot, session, user_id=user_id)
 
 
 async def _resolve_access(
