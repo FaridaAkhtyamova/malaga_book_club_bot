@@ -62,7 +62,7 @@ class MeetingInvite:
     caption: str
     google_url: str
     outlook_url: str
-    ics_url: str | None
+    ics_url: str
     filename: str = ICS_FILENAME
 
 
@@ -121,11 +121,12 @@ def build_meeting_invite(start: datetime, *, book_title: str) -> MeetingInvite:
     return build_meeting_invite_from_event(title=event_title(book_title), start=start)
 
 
-def public_ics_url(title: str, start: datetime) -> str | None:
+def public_ics_url(title: str, start: datetime, end: datetime | None = None) -> str:
     base = get_settings().PUBLIC_BASE_URL
-    if base is None:
-        return None
-    return f"{base}/invite/{encode_invite_token(title, start)}.ics"
+    if base is not None:
+        return f"{base}/invite/{encode_invite_token(title, start)}.ics"
+    meeting_end = end if end is not None else start + MEETING_DURATION
+    return _hosted_ics_url(title, start, meeting_end)
 
 
 def encode_invite_token(title: str, start: datetime) -> str:
@@ -157,7 +158,7 @@ def build_meeting_invite_from_event(*, title: str, start: datetime) -> MeetingIn
         caption=_invite_caption(title, start, end),
         google_url=_google_calendar_url(title, start, end),
         outlook_url=_outlook_calendar_url(title, start, end),
-        ics_url=public_ics_url(title, start),
+        ics_url=public_ics_url(title, start, end),
     )
 
 
@@ -332,6 +333,21 @@ def _utc_offset_ics(moment: datetime) -> str:
     hours, remainder = divmod(abs(total), 3600)
     minutes = remainder // 60
     return f"{sign}{hours:02d}{minutes:02d}"
+
+
+def _hosted_ics_url(title: str, start: datetime, end: datetime) -> str:
+    query = urlencode(
+        {
+            "subject": title,
+            "dtstart": start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "dtend": end.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "location": "Málaga",
+            "reminder": "30",
+            "description": _when_line(start, end),
+        },
+        quote_via=quote,
+    )
+    return f"https://ics.agical.io/?{query}"
 
 
 def _google_calendar_url(title: str, start: datetime, end: datetime) -> str:

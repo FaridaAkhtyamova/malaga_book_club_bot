@@ -81,6 +81,16 @@ def test_calendar_links_use_malaga_local_time() -> None:
     assert "enddt=2026-09-25T18%3A30%3A00Z" in invite.outlook_url
 
 
+def test_empty_public_url_uses_hosted_ics_for_iphone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(get_settings(), "PUBLIC_BASE_URL", None)
+    start = datetime(2026, 9, 25, 19, 0, tzinfo=ZoneInfo("Europe/Madrid"))
+    invite = build_meeting_invite(start, book_title="Dune")
+
+    assert invite.ics_url.startswith("https://ics.agical.io/?")
+    assert "2026-09-25T17%3A00%3A00Z" in invite.ics_url
+    assert "2026-09-25T18%3A30%3A00Z" in invite.ics_url
+
+
 def test_ics_upload_uses_text_calendar_mime() -> None:
     from app.bot.telegram_session import document_upload_fields
     from app.services.meeting_invite import ICS_CONTENT_TYPE

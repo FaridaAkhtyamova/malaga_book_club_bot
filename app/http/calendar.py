@@ -37,9 +37,7 @@ async def start_calendar_http() -> web.AppRunner:
     await site.start()
     logger.info("Calendar ICS HTTP on 0.0.0.0:%s", settings.CALENDAR_HTTP_PORT)
     if settings.PUBLIC_BASE_URL is None:
-        logger.warning(
-            "PUBLIC_BASE_URL is not set: iPhone calendar button will not get a text/calendar link"
-        )
+        logger.info("PUBLIC_BASE_URL is not set: iPhone button uses hosted ICS link")
     return runner
 
 
