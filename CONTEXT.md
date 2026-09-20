@@ -10,7 +10,7 @@ The bot lives in the club group and in private chat. It posts announcements, pol
 - **Bot:** aiogram 3.x (routers, FSM `MemoryStorage`, middlewares, inline keyboards)
 - **DB:** PostgreSQL 16, SQLAlchemy 2.0 + `asyncpg`, Alembic (async)
 - **Settings:** Pydantic v2 + `pydantic-settings`
-- **HTTP:** `httpx` (Google Books, Open Library)
+- **HTTP:** `httpx` (Google Books, Open Library); aiohttp serves `/invite/{token}.ics` as `text/calendar; charset=utf-8`
 - **Scheduler:** APScheduler (`AsyncIOScheduler`, timezone `Europe/Madrid`)
 - **Infra:** Docker Compose — Postgres `5432` + bot image (`book_club_db`, `book_club_bot`)
 
@@ -30,6 +30,7 @@ book_club_bot/
 │   │   ├── keyboards/
 │   │   └── middlewares/  # DbSessionMiddleware
 │   ├── core/             # Settings, async engine
+│   ├── http/             # calendar .ics download (text/calendar)
 │   ├── db/models.py
 │   ├── repositories/
 │   ├── services/         # catalog, cycle, destination, scheduler, meeting invite
@@ -59,7 +60,7 @@ book_club_bot/
 - `/close_vote` with a single winner also publishes the meeting-date poll; `/start_meeting_poll` works without a closed book vote and asks the admin for a title if none is stored
 - `/reset_vote` stops book and meeting polls without picking a winner and republishes book polls with suggestions from the 1st of the cycle's collection month
 - `/close_meeting_poll` with a single date publishes the date in the group (no admin command in that message) and DMs admins to run `/create_meeting`
-- `/create_meeting` uses the poll-chosen meeting date when it exists; otherwise the admin types the date (`25.09` / `25.09.2026`). If there is no winner book, the admin types the title before the time. The group gets an `.ics` (UTC times, no `METHOD:PUBLISH`) plus Google/Outlook calendar buttons because Telegram on iPhone often does not save the file into Calendar
+- `/create_meeting` uses the poll-chosen meeting date when it exists; otherwise the admin types the date (`25.09` / `25.09.2026`). If there is no winner book, the admin types the title before the time. The group gets an `.ics` uploaded as `text/calendar; charset=utf-8` and a **📅 Добавить в календарь** button. With `PUBLIC_BASE_URL` (HTTPS domain or `http://IP:8080`) that button hits `/invite/{token}.ics`; otherwise it falls back to Google Calendar. Telegram on iPhone often ignores the attachment.
 - Polls: `is_anonymous=False`; max 10 options; remainder of 1 is split as 9+2; first round allows multiple answers
 - Scheduler (hourly): for each bound club, on `suggest_day` at/after `announce_hour` opens next month; on `vote_day` publishes book polls unless unread group cards are waiting for admin review. Closing polls is always manual
 - `DEBUG=true` lets `/open_suggestions` reset the current month for local testing

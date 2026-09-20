@@ -249,4 +249,4 @@ def _localized_today(now: datetime | None) -> date:
 
 
 def _format_date_option(day: date) -> str:
-    return f"{day.day}, {WEEKDAYS_RU[day.weekday()]}"
+    return f"{day.day:02d}.{day.month:02d}"

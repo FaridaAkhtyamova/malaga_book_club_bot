@@ -15,8 +15,10 @@ from app.bot.handlers.group_card_review import router as group_card_review_route
 from app.bot.handlers.group_suggest import router as group_suggest_router
 from app.bot.handlers.meeting import router as meeting_router
 from app.bot.middlewares.db import DbSessionMiddleware
+from app.bot.telegram_session import CalendarFileSession
 from app.core.config import get_settings
 from app.core.db import AsyncSessionLocal
+from app.http.calendar import start_calendar_http, stop_calendar_http
 from app.repositories.settings_repo import SettingsRepository
 from app.services.club_scheduler import create_scheduler
 
@@ -27,7 +29,7 @@ async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    bot = Bot(token=settings.BOT_TOKEN)
+    bot = Bot(token=settings.BOT_TOKEN, session=CalendarFileSession())
     if settings.DEBUG:
         logging.warning("DEBUG mode is on: /open_suggestions can reset the current month")
     async with AsyncSessionLocal() as session:
@@ -54,9 +56,11 @@ async def main() -> None:
 
     scheduler = create_scheduler(bot)
     scheduler.start()
+    calendar_http = await start_calendar_http()
     try:
         await dp.start_polling(bot)
     finally:
+        await stop_calendar_http(calendar_http)
         scheduler.shutdown(wait=False)
 
 
