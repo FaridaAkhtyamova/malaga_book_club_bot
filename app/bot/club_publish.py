@@ -233,11 +233,7 @@ async def publish_meeting_invite(bot: Bot, dest: ClubDestination, invite: Meetin
         document=document,
         caption=invite.caption,
         message_thread_id=dest.message_thread_id,
-        reply_markup=meeting_invite_keyboard(
-            ics_url=invite.ics_url,
-            google_url=invite.google_url,
-            outlook_url=invite.outlook_url,
-        ),
+        reply_markup=meeting_invite_keyboard(invite.ics_url),
         disable_content_type_detection=True,
     )
 

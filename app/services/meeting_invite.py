@@ -7,13 +7,12 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
 
 MEETING_DURATION = timedelta(minutes=90)
-ICS_FILENAME = "knizhny-klub.ics"
+ICS_FILENAME = "event.ics"
 ICS_CONTENT_TYPE = "text/calendar; charset=utf-8"
 _TOKEN_SIG_LEN = 24
 
@@ -60,9 +59,7 @@ class MeetingInvite:
     end: datetime
     ics_bytes: bytes
     caption: str
-    google_url: str
-    outlook_url: str
-    ics_url: str
+    ics_url: str | None
     filename: str = ICS_FILENAME
 
 
@@ -121,12 +118,11 @@ def build_meeting_invite(start: datetime, *, book_title: str) -> MeetingInvite:
     return build_meeting_invite_from_event(title=event_title(book_title), start=start)
 
 
-def public_ics_url(title: str, start: datetime, end: datetime | None = None) -> str:
+def public_ics_url(title: str, start: datetime) -> str | None:
     base = get_settings().PUBLIC_BASE_URL
-    if base is not None:
-        return f"{base}/invite/{encode_invite_token(title, start)}.ics"
-    meeting_end = end if end is not None else start + MEETING_DURATION
-    return _hosted_ics_url(title, start, meeting_end)
+    if base is None:
+        return None
+    return f"{base}/invite/{encode_invite_token(title, start)}.ics"
 
 
 def encode_invite_token(title: str, start: datetime) -> str:
@@ -156,9 +152,7 @@ def build_meeting_invite_from_event(*, title: str, start: datetime) -> MeetingIn
         end=end,
         ics_bytes=_ics_bytes(title, start, end),
         caption=_invite_caption(title, start, end),
-        google_url=_google_calendar_url(title, start, end),
-        outlook_url=_outlook_calendar_url(title, start, end),
-        ics_url=public_ics_url(title, start, end),
+        ics_url=public_ics_url(title, start),
     )
 
 
@@ -191,12 +185,6 @@ def _decode_invite_token(token: str) -> tuple[str, datetime] | None:
 
 def _token_key() -> bytes:
     return get_settings().BOT_TOKEN.encode("utf-8")
-
-
-def _event_uid(title: str, start: datetime) -> str:
-    stamp = start.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    digest = hashlib.sha256(f"{title}|{stamp}".encode()).hexdigest()[:32]
-    return f"{digest}@malaga-book-club"
 
 
 def _localized_now(now: datetime | None) -> datetime:
@@ -239,32 +227,19 @@ def _when_line(start: datetime, end: datetime) -> str:
 def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
     tz_name = get_settings().TIMEZONE
     tz = ZoneInfo(tz_name)
-    stamp = _utc_stamp(datetime.now(UTC))
-    uid = _event_uid(title, start)
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "PRODID:-//Malaga Book Club Bot//EN",
-        "CALSCALE:GREGORIAN",
-        f"X-WR-TIMEZONE:{tz_name}",
-        *_vtimezone_lines(tz_name),
         "BEGIN:VEVENT",
-        f"UID:{uid}",
-        f"DTSTAMP:{stamp}",
-        f"CREATED:{stamp}",
-        f"LAST-MODIFIED:{stamp}",
+        f"SUMMARY:{_ics_escape(title)}",
+        f"LOCATION:{_ics_escape('Málaga')}",
         f"DTSTART;TZID={tz_name}:{_local_stamp(start.astimezone(tz))}",
         f"DTEND;TZID={tz_name}:{_local_stamp(end.astimezone(tz))}",
-        f"SUMMARY:{_ics_escape(title)}",
-        f"DESCRIPTION:{_ics_escape(_when_line(start, end))}",
-        "LOCATION:Málaga",
-        "STATUS:CONFIRMED",
-        "SEQUENCE:0",
-        "TRANSP:OPAQUE",
         "BEGIN:VALARM",
+        "TRIGGER:-PT1H",
         "ACTION:DISPLAY",
         "DESCRIPTION:Напоминание",
-        "TRIGGER:-PT30M",
         "END:VALARM",
         "END:VEVENT",
         "END:VCALENDAR",
@@ -276,114 +251,10 @@ def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
 
 
 def _invite_caption(title: str, start: datetime, end: datetime) -> str:
-    return f"🗓️ {title}\n{_when_line(start, end)}"
-
-
-def _vtimezone_lines(tz_name: str) -> list[str]:
-    tz = ZoneInfo(tz_name)
-    winter = datetime(2026, 1, 15, 12, 0, tzinfo=tz)
-    summer = datetime(2026, 7, 15, 12, 0, tzinfo=tz)
-    winter_off = _utc_offset_ics(winter)
-    summer_off = _utc_offset_ics(summer)
-    winter_name = winter.tzname() or winter_off
-    summer_name = summer.tzname() or summer_off
-    lines = [
-        "BEGIN:VTIMEZONE",
-        f"TZID:{tz_name}",
-        f"X-LIC-LOCATION:{tz_name}",
-    ]
-    if winter_off == summer_off:
-        lines.extend(
-            [
-                "BEGIN:STANDARD",
-                f"TZOFFSETFROM:{winter_off}",
-                f"TZOFFSETTO:{winter_off}",
-                f"TZNAME:{winter_name}",
-                "DTSTART:19700101T000000",
-                "END:STANDARD",
-            ]
-        )
-    else:
-        lines.extend(
-            [
-                "BEGIN:DAYLIGHT",
-                f"TZOFFSETFROM:{winter_off}",
-                f"TZOFFSETTO:{summer_off}",
-                f"TZNAME:{summer_name}",
-                "DTSTART:19700329T020000",
-                "RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU",
-                "END:DAYLIGHT",
-                "BEGIN:STANDARD",
-                f"TZOFFSETFROM:{summer_off}",
-                f"TZOFFSETTO:{winter_off}",
-                f"TZNAME:{winter_name}",
-                "DTSTART:19701025T030000",
-                "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU",
-                "END:STANDARD",
-            ]
-        )
-    lines.append("END:VTIMEZONE")
-    return lines
-
-
-def _utc_offset_ics(moment: datetime) -> str:
-    offset = moment.utcoffset() or timedelta(0)
-    total = int(offset.total_seconds())
-    sign = "+" if total >= 0 else "-"
-    hours, remainder = divmod(abs(total), 3600)
-    minutes = remainder // 60
-    return f"{sign}{hours:02d}{minutes:02d}"
-
-
-def _hosted_ics_url(title: str, start: datetime, end: datetime) -> str:
-    query = urlencode(
-        {
-            "subject": title,
-            "dtstart": start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "dtend": end.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "location": "Málaga",
-            "reminder": "30",
-            "description": _when_line(start, end),
-        },
-        quote_via=quote,
+    return (
+        f"🗓️ {title}\n{_when_line(start, end)}\n\n"
+        "Нажмите на файл, чтобы добавить запись в календарь."
     )
-    return f"https://ics.agical.io/?{query}"
-
-
-def _google_calendar_url(title: str, start: datetime, end: datetime) -> str:
-    tz_name = get_settings().TIMEZONE
-    local_start = start.astimezone(ZoneInfo(tz_name))
-    local_end = end.astimezone(ZoneInfo(tz_name))
-    dates = f"{_local_stamp(local_start)}/{_local_stamp(local_end)}"
-    query = urlencode(
-        {
-            "action": "TEMPLATE",
-            "text": title,
-            "dates": dates,
-            "ctz": tz_name,
-            "location": "Málaga",
-        },
-        quote_via=quote,
-    )
-    return f"https://calendar.google.com/calendar/render?{query}"
-
-
-def _outlook_calendar_url(title: str, start: datetime, end: datetime) -> str:
-    query = urlencode(
-        {
-            "rru": "addevent",
-            "subject": title,
-            "startdt": start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "enddt": end.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "location": "Málaga",
-        },
-        quote_via=quote,
-    )
-    return f"https://outlook.live.com/calendar/0/deeplink/compose?{query}"
-
-
-def _utc_stamp(moment: datetime) -> str:
-    return moment.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _local_stamp(moment: datetime) -> str:
