@@ -227,18 +227,13 @@ async def _send_pending_card(
 
 
 async def publish_meeting_invite(bot: Bot, dest: ClubDestination, invite: MeetingInvite) -> None:
-    markup = meeting_invite_keyboard(invite.ics_url)
-    await bot.send_message(
-        chat_id=dest.chat_id,
-        text=invite.caption,
-        message_thread_id=dest.message_thread_id,
-        reply_markup=markup,
-    )
     document = BufferedInputFile(invite.ics_bytes, filename=invite.filename)
     await bot.send_document(
         chat_id=dest.chat_id,
         document=document,
+        caption=invite.caption,
         message_thread_id=dest.message_thread_id,
+        reply_markup=meeting_invite_keyboard(invite.ics_url),
         disable_content_type_detection=True,
     )
 

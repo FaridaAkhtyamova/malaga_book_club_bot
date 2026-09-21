@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -12,11 +13,9 @@ def madrid_timezone(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(get_settings(), "TIMEZONE", "Europe/Madrid")
 
 
-def test_event_title_quotes_book_name() -> None:
-    assert event_title("Винни-Пух и все-все-все") == (
-        'Книжный Клуб: "Винни-Пух и все-все-все"'
-    )
-    assert event_title("«Dune»") == 'Книжный Клуб: "Dune"'
+def test_event_title_does_not_quote_book_name() -> None:
+    assert event_title("Винни-Пух и все-все-все") == "Книжный Клуб: Винни-Пух и все-все-все"
+    assert event_title("«Dune»") == "Книжный Клуб: Dune"
 
 
 def test_invite_caption_shows_quoted_title_and_malaga_time() -> None:
@@ -31,20 +30,24 @@ def test_invite_caption_shows_quoted_title_and_malaga_time() -> None:
 
 
 def test_ics_matches_iphone_event_template() -> None:
-    start = datetime(2026, 9, 25, 19, 0, tzinfo=ZoneInfo("Europe/Madrid"))
-    invite = build_meeting_invite(start, book_title="Dune")
+    start = datetime(2026, 9, 24, 19, 0, tzinfo=ZoneInfo("Europe/Madrid"))
+    invite = build_meeting_invite(start, book_title="Винни-Пух и все-все-все")
     text = invite.ics_bytes.decode("utf-8")
 
     assert text.startswith("BEGIN:VCALENDAR\r\n")
-    assert "VERSION:2.0" in text
-    assert "PRODID:-//Malaga Book Club Bot//EN" in text
-    assert "METHOD:" not in text
+    assert "VERSION:2.0\r\n" in text
+    assert "PRODID:-//Malaga Book Club Bot//EN\r\n" in text
+    assert "CALSCALE:GREGORIAN\r\n" in text
+    assert "METHOD:PUBLISH\r\n" in text
+    assert "UID:bookclub-20260924-190000@malagabookclub\r\n" in text
+    assert re.search(r"DTSTAMP:\d{8}T\d{6}Z\r\n", text)
+    assert "SUMMARY:Книжный Клуб: Винни-Пух и все-все-все\r\n" in text
+    assert "LOCATION:Málaga\r\n" in text
+    assert "DTSTART;TZID=Europe/Madrid:20260924T190000\r\n" in text
+    assert "DTEND;TZID=Europe/Madrid:20260924T203000\r\n" in text
+    assert "TRIGGER:-PT1H\r\n" in text
     assert "BEGIN:VTIMEZONE" not in text
-    assert 'SUMMARY:Книжный Клуб: "Dune"' in text
-    assert "LOCATION:Málaga" in text
-    assert "DTSTART;TZID=Europe/Madrid:20260925T190000" in text
-    assert "DTEND;TZID=Europe/Madrid:20260925T203000" in text
-    assert "TRIGGER:-PT1H" in text
+    assert b"\r\n " not in invite.ics_bytes
     assert text.endswith("END:VCALENDAR\r\n")
     assert invite.filename == ICS_FILENAME == "event.ics"
 
@@ -58,16 +61,13 @@ def test_ics_keeps_winter_madrid_wall_clock() -> None:
     assert "DTEND;TZID=Europe/Madrid:20261225T203000" in text
 
 
-def test_ics_folds_long_utf8_summary() -> None:
+def test_ics_keeps_summary_on_one_line() -> None:
     start = datetime(2026, 9, 25, 19, 0, tzinfo=ZoneInfo("Europe/Madrid"))
-    invite = build_meeting_invite(start, book_title="ы" * 80)
-    lines = invite.ics_bytes.split(b"\r\n")
-    folded = [line for line in lines if line.startswith(b" ")]
+    invite = build_meeting_invite(start, book_title="Винни-Пух и все-все-все")
+    lines = invite.ics_bytes.decode("utf-8").split("\r\n")
 
-    assert any(line.startswith(b"SUMMARY:") for line in lines)
-    assert folded
-    for line in lines:
-        assert len(line) <= 75
+    assert "SUMMARY:Книжный Клуб: Винни-Пух и все-все-все" in lines
+    assert not any(line.startswith(" ") for line in lines)
 
 
 def test_ics_upload_uses_text_calendar_mime() -> None:
@@ -81,13 +81,16 @@ def test_ics_upload_uses_text_calendar_mime() -> None:
     assert document_upload_fields("cover.jpg") == {"filename": "cover.jpg"}
 
 
-def test_empty_public_url_uses_safari_ics_link(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(get_settings(), "PUBLIC_BASE_URL", None)
-    start = datetime(2026, 9, 25, 19, 0, tzinfo=ZoneInfo("Europe/Madrid"))
-    invite = build_meeting_invite(start, book_title="Dune")
-    assert invite.ics_url.startswith("https://ics.agical.io/?")
-    assert "2026-09-25T17%3A00%3A00Z" in invite.ics_url
-    assert "2026-09-25T18%3A30%3A00Z" in invite.ics_url
+def test_calendar_button_uses_calndr_apple_link() -> None:
+    start = datetime(2026, 9, 20, 19, 30, tzinfo=ZoneInfo("Europe/Madrid"))
+    invite = build_meeting_invite(start, book_title="Четвертое крыло")
+
+    assert invite.ics_url.startswith("https://calndr.link/d/event/?")
+    assert "service=apple" in invite.ics_url
+    assert "start=2026-09-20T19%3A30%3A00" in invite.ics_url
+    assert "end=2026-09-20T21%3A00%3A00" in invite.ics_url
+    assert "timezone=Europe%2FMadrid" in invite.ics_url
+    assert "title=" in invite.ics_url
 
 
 def test_public_ics_url_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -95,13 +98,9 @@ def test_public_ics_url_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
     start = datetime(2026, 9, 24, 19, 0, tzinfo=ZoneInfo("Europe/Madrid"))
     invite = build_meeting_invite(start, book_title="Dune")
 
-    assert invite.ics_url is not None
-    assert invite.ics_url.startswith("https://cal.example/invite/")
-    assert invite.ics_url.endswith(".ics")
+    from app.services.meeting_invite import encode_invite_token, invite_from_token
 
-    from app.services.meeting_invite import invite_from_token
-
-    token = invite.ics_url.rsplit("/", 1)[-1].removesuffix(".ics")
+    token = encode_invite_token(invite.title, invite.start)
     restored = invite_from_token(token)
     assert restored is not None
     assert restored.title == invite.title
@@ -109,18 +108,16 @@ def test_public_ics_url_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "DTSTART;TZID=Europe/Madrid:20260924T190000" in restored.ics_bytes.decode("utf-8")
 
 
-async def test_ics_http_serves_text_calendar(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(get_settings(), "PUBLIC_BASE_URL", "https://cal.example")
+async def test_ics_http_serves_text_calendar() -> None:
     start = datetime(2026, 9, 24, 19, 0, tzinfo=ZoneInfo("Europe/Madrid"))
     invite = build_meeting_invite(start, book_title="Dune")
-    assert invite.ics_url is not None
-    token = invite.ics_url.rsplit("/", 1)[-1].removesuffix(".ics")
 
     from aiohttp.test_utils import TestClient, TestServer
 
     from app.http.calendar import create_calendar_app
-    from app.services.meeting_invite import ICS_CONTENT_TYPE
+    from app.services.meeting_invite import ICS_CONTENT_TYPE, encode_invite_token
 
+    token = encode_invite_token(invite.title, invite.start)
     app = create_calendar_app()
     async with TestClient(TestServer(app)) as client:
         response = await client.get(f"/invite/{token}.ics")

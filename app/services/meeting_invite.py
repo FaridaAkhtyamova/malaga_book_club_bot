@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from urllib.parse import quote, urlencode
+from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
@@ -65,7 +65,7 @@ class MeetingInvite:
 
 
 def event_title(book_title: str) -> str:
-    return f'Книжный Клуб: "{_bare_book_title(book_title)}"'
+    return f"Книжный Клуб: {_bare_book_title(book_title)}"
 
 
 def parse_meeting_date(raw: str, *, now: datetime | None = None) -> date:
@@ -120,11 +120,8 @@ def build_meeting_invite(start: datetime, *, book_title: str) -> MeetingInvite:
 
 
 def public_ics_url(title: str, start: datetime, end: datetime | None = None) -> str:
-    base = get_settings().PUBLIC_BASE_URL
-    if base is not None:
-        return f"{base}/invite/{encode_invite_token(title, start)}.ics"
     meeting_end = end if end is not None else start + MEETING_DURATION
-    return _safari_ics_url(title, start, meeting_end)
+    return _apple_calendar_url(title, start, meeting_end)
 
 
 def encode_invite_token(title: str, start: datetime) -> str:
@@ -229,14 +226,20 @@ def _when_line(start: datetime, end: datetime) -> str:
 def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
     tz_name = get_settings().TIMEZONE
     tz = ZoneInfo(tz_name)
+    local_start = start.astimezone(tz)
+    uid = f"bookclub-{local_start.strftime('%Y%m%d-%H%M%S')}@malagabookclub"
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "PRODID:-//Malaga Book Club Bot//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
         "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"DTSTAMP:{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}",
         f"SUMMARY:{_ics_escape(title)}",
         f"LOCATION:{_ics_escape('Málaga')}",
-        f"DTSTART;TZID={tz_name}:{_local_stamp(start.astimezone(tz))}",
+        f"DTSTART;TZID={tz_name}:{_local_stamp(local_start)}",
         f"DTEND;TZID={tz_name}:{_local_stamp(end.astimezone(tz))}",
         "BEGIN:VALARM",
         "TRIGGER:-PT1H",
@@ -246,57 +249,41 @@ def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
         "END:VEVENT",
         "END:VCALENDAR",
     ]
-    folded: list[str] = []
-    for line in lines:
-        folded.extend(_fold_ics_line(line))
-    return ("\r\n".join(folded) + "\r\n").encode("utf-8")
+    return ("\r\n".join(lines) + "\r\n").encode("utf-8")
 
 
 def _invite_caption(title: str, start: datetime, end: datetime) -> str:
     return (
-        f"🗓️ {title}\n{_when_line(start, end)}\n\n"
+        f"🗓️ {_quoted_display_title(title)}\n{_when_line(start, end)}\n\n"
         "iPhone: нажмите «Добавить в календарь»."
     )
 
 
-def _safari_ics_url(title: str, start: datetime, end: datetime) -> str:
+def _quoted_display_title(title: str) -> str:
+    prefix = "Книжный Клуб: "
+    if title.startswith(prefix):
+        return f'{prefix}"{title.removeprefix(prefix)}"'
+    return title
+
+
+def _apple_calendar_url(title: str, start: datetime, end: datetime) -> str:
+    tz_name = get_settings().TIMEZONE
+    local_start = start.astimezone(ZoneInfo(tz_name))
+    local_end = end.astimezone(ZoneInfo(tz_name))
     query = urlencode(
         {
-            "subject": title,
-            "dtstart": start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "dtend": end.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "location": "Málaga",
-            "reminder": "60",
-            "description": _when_line(start, end),
-        },
-        quote_via=quote,
+            "service": "apple",
+            "start": local_start.strftime("%Y-%m-%dT%H:%M:%S"),
+            "end": local_end.strftime("%Y-%m-%dT%H:%M:%S"),
+            "title": title,
+            "timezone": tz_name,
+        }
     )
-    return f"https://ics.agical.io/?{query}"
+    return f"https://calndr.link/d/event/?{query}"
 
 
 def _local_stamp(moment: datetime) -> str:
     return moment.strftime("%Y%m%dT%H%M%S")
-
-
-def _fold_ics_line(line: str) -> list[str]:
-    remaining = line.encode("utf-8")
-    parts: list[str] = []
-    limit = 75
-    while remaining:
-        chunk = remaining[:limit]
-        while chunk:
-            try:
-                chunk.decode("utf-8")
-                break
-            except UnicodeDecodeError:
-                chunk = chunk[:-1]
-        if not chunk:
-            chunk = remaining[:1]
-        text = chunk.decode("utf-8")
-        parts.append(text if not parts else f" {text}")
-        remaining = remaining[len(chunk) :]
-        limit = 74
-    return parts
 
 
 def _ics_escape(text: str) -> str:
