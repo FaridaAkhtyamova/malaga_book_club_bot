@@ -5,7 +5,13 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from app.core.config import get_settings
-from app.services.meeting_invite import ICS_FILENAME, build_meeting_invite, event_title
+from app.services.meeting_invite import (
+    ICS_FILENAME,
+    InvalidMeetingTimeError,
+    build_meeting_invite,
+    event_title,
+    parse_meeting_time,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -82,3 +88,38 @@ def test_ics_upload_uses_text_calendar_mime() -> None:
         "content_type": ICS_CONTENT_TYPE,
     }
     assert document_upload_fields("cover.jpg") == {"filename": "cover.jpg"}
+
+
+def test_parse_meeting_time_accepts_hours_and_halves() -> None:
+    nineteen = parse_meeting_time("19")
+    assert (nineteen.hour, nineteen.minute, nineteen.day_offset, nineteen.quip) == (19, 0, 0, None)
+    assert parse_meeting_time("19:00").hour == 19
+    assert parse_meeting_time("12.5").minute == 30
+    assert parse_meeting_time("12,5").minute == 30
+    assert parse_meeting_time("12.30").minute == 30
+    assert parse_meeting_time(" 12 , 5 ").hour == 12
+
+
+def test_parse_meeting_time_jokes_about_early_and_late_hours() -> None:
+    dawn = parse_meeting_time("7")
+    assert dawn.hour == 7
+    assert dawn.quip is not None
+    assert "жаворонки" in dawn.quip
+
+    night = parse_meeting_time("22")
+    assert night.hour == 22
+    assert night.quip is not None
+    assert "перебор" in night.quip
+
+    midnight = parse_meeting_time("24")
+    assert midnight.quip is not None
+    assert "полночь" in midnight.quip
+
+
+def test_parse_meeting_time_rejects_impossible_hours() -> None:
+    with pytest.raises(InvalidMeetingTimeError):
+        parse_meeting_time("25")
+    with pytest.raises(InvalidMeetingTimeError):
+        parse_meeting_time("19:99")
+    with pytest.raises(InvalidMeetingTimeError):
+        parse_meeting_time("вечером")

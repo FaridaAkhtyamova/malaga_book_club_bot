@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
@@ -31,7 +31,7 @@ router.message.filter(AdminFilter(), F.chat.type == ChatType.PRIVATE)
 
 _MEETING_STATES = StateFilter(MeetingInviteStates)
 _ASK_DATE = "Дата встречи ещё не выбрана. Напишите её как 25.09 или 25.09.2026."
-_ASK_TIME = "Напишите время начала, например 19:00. Встреча продлится 1,5 часа по Малаге."
+_ASK_TIME = "Напишите время начала, например 19 или 12.5. Встреча продлится 1,5 часа по Малаге."
 _ASK_TITLE = "Книга ещё не выбрана. Напишите название для приглашения."
 _CANCELLED = "Создание встречи отменено."
 _DATE_PAST = "Эта дата уже прошла. Напишите другую."
@@ -215,11 +215,21 @@ async def on_meeting_time(
         await state.update_data(book_title=book_title, meeting_date=meeting_day.isoformat())
 
     try:
-        hour, minute = parse_meeting_time(message.text)
-        start = build_meeting_start(meeting_day, hour, minute)
+        parsed = parse_meeting_time(message.text)
     except InvalidMeetingTimeError as exc:
         await message.answer(str(exc))
         return
+
+    if parsed.quip is not None:
+        await message.answer(parsed.quip)
+        return
+
+    try:
+        start = build_meeting_start(
+            meeting_day + timedelta(days=parsed.day_offset),
+            parsed.hour,
+            parsed.minute,
+        )
     except MeetingInPastError:
         await message.answer("Это время уже прошло. Напишите другое время.")
         return

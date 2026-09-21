@@ -13,7 +13,11 @@ ICS_CONTENT_TYPE = "text/calendar; charset=utf-8"
 
 _DATE_FULL = re.compile(r"^(\d{1,2})[./](\d{1,2})[./](\d{4})$")
 _DATE_SHORT = re.compile(r"^(\d{1,2})[./](\d{1,2})$")
-_TIME = re.compile(r"^(\d{1,2})[:.](\d{2})$")
+_TIME_COLON = re.compile(r"^(\d{1,2}):(\d{2})$")
+_TIME_DOT_MINUTES = re.compile(r"^(\d{1,2})\.(\d{2})$")
+_TIME_DECIMAL = re.compile(r"^(\d{1,2})[.,](\d+)$")
+_TIME_HOUR = re.compile(r"^(\d{1,2})$")
+_TIME_HINT = "Напишите время как 19 или 12.5."
 
 MONTH_GENITIVE_RU: dict[int, str] = {
     1: "января",
@@ -57,6 +61,14 @@ class MeetingInvite:
     filename: str = ICS_FILENAME
 
 
+@dataclass(frozen=True, slots=True)
+class ParsedMeetingTime:
+    hour: int
+    minute: int
+    day_offset: int = 0
+    quip: str | None = None
+
+
 def event_title(book_title: str) -> str:
     return f"Книжный Клуб: {_bare_book_title(book_title)}"
 
@@ -75,15 +87,51 @@ def parse_meeting_date(raw: str, *, now: datetime | None = None) -> date:
     raise InvalidMeetingDateError("Напишите дату как 25.09 или 25.09.2026.")
 
 
-def parse_meeting_time(raw: str) -> tuple[int, int]:
-    match = _TIME.fullmatch(raw.strip())
-    if match is None:
-        raise InvalidMeetingTimeError("Напишите время как 19:00.")
-    hour = int(match.group(1))
-    minute = int(match.group(2))
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        raise InvalidMeetingTimeError("Напишите время как 19:00.")
-    return hour, minute
+def parse_meeting_time(raw: str) -> ParsedMeetingTime:
+    text = re.sub(r"\s+", "", raw.strip())
+    colon = _TIME_COLON.fullmatch(text)
+    if colon is not None:
+        return _meeting_time(int(colon.group(1)), int(colon.group(2)))
+
+    dotted = _TIME_DOT_MINUTES.fullmatch(text)
+    if dotted is not None:
+        return _meeting_time(int(dotted.group(1)), int(dotted.group(2)))
+
+    decimal = _TIME_DECIMAL.fullmatch(text)
+    if decimal is not None:
+        hour = int(decimal.group(1))
+        fraction = decimal.group(2)
+        minutes = round(int(fraction) / (10 ** len(fraction)) * 60)
+        if minutes == 60:
+            return _meeting_time(hour + 1, 0)
+        return _meeting_time(hour, minutes)
+
+    whole = _TIME_HOUR.fullmatch(text)
+    if whole is not None:
+        return _meeting_time(int(whole.group(1)), 0)
+
+    raise InvalidMeetingTimeError(_TIME_HINT)
+
+
+def _meeting_time(hour: int, minute: int) -> ParsedMeetingTime:
+    if not (0 <= minute <= 59):
+        raise InvalidMeetingTimeError(_TIME_HINT)
+    if hour == 24 and minute == 0:
+        return ParsedMeetingTime(0, 0, day_offset=1, quip=_time_quip(24, 0))
+    if not (0 <= hour <= 23):
+        raise InvalidMeetingTimeError(_TIME_HINT)
+    return ParsedMeetingTime(hour, minute, quip=_time_quip(hour, minute))
+
+
+def _time_quip(hour: int, minute: int) -> str | None:
+    if hour == 24:
+        return "В полночь? Совы книжного клуба, мы вас видим. Напишите время до 21."
+    clock = f"{hour}:{minute:02d}"
+    if hour <= 7:
+        return f"В {clock}? Даже жаворонки ещё клевали носом. Напишите время с 8 до 21."
+    if hour >= 21:
+        return f"В {clock}? Ночная смена книжного клуба — это уже перебор. Напишите время до 21."
+    return None
 
 
 def build_meeting_start(
