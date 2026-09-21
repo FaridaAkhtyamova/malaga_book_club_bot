@@ -57,6 +57,18 @@ class CycleVoteRepository:
         await self.session.refresh(cycle)
         return cycle
 
+    async def set_meeting_hour(self, cycle: SuggestionCycle, hour: int) -> SuggestionCycle:
+        cycle.winner_meeting_hour = hour
+        await self.session.commit()
+        await self.session.refresh(cycle)
+        return cycle
+
+    async def clear_meeting_hour(self, cycle: SuggestionCycle) -> SuggestionCycle:
+        cycle.winner_meeting_hour = None
+        await self.session.commit()
+        await self.session.refresh(cycle)
+        return cycle
+
     async def clear_winner(self, cycle: SuggestionCycle) -> SuggestionCycle:
         cycle.winner_book_id = None
         await self.session.commit()

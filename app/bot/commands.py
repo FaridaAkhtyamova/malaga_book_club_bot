@@ -123,10 +123,24 @@ COMMANDS: tuple[CommandInfo, ...] = (
         admin=True,
     ),
     CommandInfo(
+        "start_meeting_time_poll",
+        "Опрос времени встречи",
+        "/start_meeting_time_poll — опрос времени встречи (часы с 10:00 до 19:00; "
+        "в будни обычно не нужен — встреча в 19:00)",
+        admin=True,
+    ),
+    CommandInfo(
+        "close_meeting_time_poll",
+        "Закрыть опрос времени и выбрать час",
+        "/close_meeting_time_poll — закрыть опрос времени, выбрать час "
+        "или запустить второй тур при ничьей",
+        admin=True,
+    ),
+    CommandInfo(
         "create_meeting",
         "Приглашение в календарь",
         "/create_meeting — спросить дату (если нет опроса дат), название книги "
-        "(если её нет) и время, затем опубликовать приглашение",
+        "(если её нет) и время (если нет опроса времени), затем опубликовать приглашение",
         admin=True,
     ),
     CommandInfo(

@@ -22,13 +22,13 @@ Handlers → Services → Repositories → Models
 - `app/bot/middlewares/` — `DbSessionMiddleware` injects `AsyncSession`
 - `app/bot/club_publish.py` — announcements, polls, calendar invite
 - `app/services/` — catalog, cycle, destination, `club_scheduler`, meeting invite
-- `app/db/models.py` — `User` (`active_club_id`), `Book`, `ClubSettings` (one row per group), `SuggestionCycle` (per club), `Suggestion`, `PendingGroupCard`, `VotePoll`, `MeetingPoll` (+ unused `Meeting`/`Vote`/`RSVP`)
+- `app/db/models.py` — `User` (`active_club_id`), `Book`, `ClubSettings` (one row per group), `SuggestionCycle` (per club), `Suggestion`, `PendingGroupCard`, `VotePoll`, `MeetingPoll`, `MeetingTimePoll` (+ unused `Meeting`/`Vote`/`RSVP`)
 - `main.py` — polling + FSM `MemoryStorage` + scheduler
 
 ## Status
 
-- Alembic: initial tables → suggestion cycles → suggest topic → vote/meeting polls + winner fields → pending group cards → multi-club
-- Cycle: open next month → hashtag in group (admin review before poll) or `/suggest` in DM → `/start_vote` → `/close_vote` (runoff on tie; meeting-date poll on a single winner) → `/close_meeting_poll` → `/create_meeting` (`.ics`; date can be typed if there was no poll)
+- Alembic: initial tables → suggestion cycles → suggest topic → vote/meeting polls + winner fields → pending group cards → multi-club → meeting time polls
+- Cycle: open next month → hashtag in group (admin review before poll) or `/suggest` in DM → `/start_vote` → `/close_vote` (runoff on tie; meeting-date poll on a single winner) → `/close_meeting_poll` → optional `/start_meeting_time_poll` (weekends) → `/create_meeting` (`.ics`; date/time can be typed if there was no poll)
 - `/reset_vote` republishes book polls from suggestions since the 1st of the collection month without wiping the cycle
 - Scheduler opens suggestions and starts book polls per bound club (pauses if group cards await review); it does not close them
 - DM uses one active group; `/clubs` is hidden and only needed when a user is in several bound chats

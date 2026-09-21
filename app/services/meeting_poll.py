@@ -19,6 +19,8 @@ from app.services.meeting_invite import (
 
 DATE_OPTION_COUNT = 10
 DATE_OFFSET_DAYS = 2
+TIME_START_HOUR = 10
+TIME_END_HOUR = 19
 OPTION_UNREAD = "не прочитала"
 OPTION_SKIP = "пропущу"
 POLL_QUESTION_LIMIT = 300
@@ -45,6 +47,12 @@ class MeetingDateOption:
 
 
 @dataclass(frozen=True, slots=True)
+class MeetingTimeOption:
+    label: str
+    hour: int
+
+
+@dataclass(frozen=True, slots=True)
 class DateVoteCounts:
     by_date: dict[date, int]
 
@@ -59,6 +67,23 @@ class DateVoteCounts:
         if top <= 0:
             return []
         return [day for day, votes in self.by_date.items() if votes == top]
+
+
+@dataclass(frozen=True, slots=True)
+class HourVoteCounts:
+    by_hour: dict[int, int]
+
+    @property
+    def total(self) -> int:
+        return sum(self.by_hour.values())
+
+    def leaders(self) -> list[int]:
+        if not self.by_hour:
+            return []
+        top = max(self.by_hour.values())
+        if top <= 0:
+            return []
+        return [hour for hour, votes in self.by_hour.items() if votes == top]
 
 
 def meeting_poll_title(book: Book) -> str:
@@ -124,7 +149,7 @@ def option_date_isos(choices: Sequence[MeetingDateOption]) -> list[str | None]:
     return [choice.day.isoformat() if choice.day is not None else None for choice in choices]
 
 
-def option_labels(choices: Sequence[MeetingDateOption]) -> list[str]:
+def option_labels(choices: Sequence[MeetingDateOption | MeetingTimeOption]) -> list[str]:
     return [choice.label for choice in choices]
 
 
@@ -224,16 +249,146 @@ def meeting_date_announcement(
 
 def meeting_date_admin_prompt(book: Book | None, day: date) -> str:
     formatted = format_meeting_day(day)
+    weekend = day.weekday() >= 5
     if book is None:
-        return (
+        prompt = (
             f"Дата встречи выбрана: {formatted}.\n"
             "Напишите /create_meeting, затем название книги и время — "
             "опубликуется приглашение в календарь."
         )
+    else:
+        prompt = (
+            f"Дата встречи по «{meeting_poll_title(book)}»: {formatted}.\n"
+            "Напишите /create_meeting и укажите время — "
+            "опубликуется приглашение в календарь."
+        )
+    if weekend:
+        return (
+            f"{prompt}\n"
+            "На выходных время можно выбрать опросом: /start_meeting_time_poll."
+        )
+    return f"{prompt}\nВ будни встреча обычно в 19:00."
+
+
+def meeting_time_poll_question(title: str) -> str:
+    prefix = "🕐 Во сколько встречаемся по «"
+    suffix = "»?"
+    budget = POLL_QUESTION_LIMIT - len(prefix) - len(suffix)
+    if len(title) > budget:
+        title = f"{title[: max(budget - 1, 1)]}…"
+    return f"{prefix}{title}{suffix}"
+
+
+def meeting_time_poll_intro(title: str, day: date | None = None) -> str:
+    when = f" {format_meeting_day(day)}" if day is not None else ""
     return (
-        f"Дата встречи по «{meeting_poll_title(book)}»: {formatted}.\n"
-        "Напишите /create_meeting и укажите время — "
-        "опубликуется приглашение в календарь."
+        f"🕐 Голосуем за время встречи{when} по «{title}». "
+        "Можно выбрать несколько часов. Опрос неанонимный."
+    )
+
+
+def meeting_time_runoff_intro() -> str:
+    return (
+        "🔁 Ничья. Голосуем ещё раз — только часы с одинаковым числом голосов. "
+        "Опрос неанонимный, один вариант."
+    )
+
+
+def meeting_time_runoff_question() -> str:
+    return "🕐 Время встречи — второй тур"
+
+
+def format_meeting_hour(hour: int) -> str:
+    return f"{hour:02d}:00"
+
+
+def meeting_time_poll_options() -> list[MeetingTimeOption]:
+    return [
+        MeetingTimeOption(format_meeting_hour(hour), hour)
+        for hour in range(TIME_START_HOUR, TIME_END_HOUR + 1)
+    ]
+
+
+def meeting_time_runoff_options(hours: Sequence[int]) -> list[MeetingTimeOption]:
+    unique = list(dict.fromkeys(hours))
+    return [MeetingTimeOption(format_meeting_hour(hour), hour) for hour in unique]
+
+
+def option_hours(choices: Sequence[MeetingTimeOption]) -> list[int]:
+    return [choice.hour for choice in choices]
+
+
+def chunk_hours_for_polls(
+    hours: Sequence[int],
+    *,
+    max_size: int = POLL_MAX_OPTIONS,
+) -> list[list[int]]:
+    remaining = list(hours)
+    if len(remaining) < MIN_RUNOFF_DATES:
+        return []
+    if len(remaining) <= max_size:
+        return [remaining]
+
+    chunks: list[list[int]] = []
+    while remaining:
+        if len(remaining) <= max_size:
+            if len(remaining) == 1:
+                previous = chunks[-1]
+                moved = previous.pop()
+                chunks.append([moved, remaining[0]])
+            else:
+                chunks.append(remaining)
+            break
+        chunks.append(remaining[:max_size])
+        remaining = remaining[max_size:]
+    return chunks
+
+
+def tally_meeting_hours(
+    stored_hours: Sequence[int],
+    options: Sequence[PollOption],
+) -> HourVoteCounts:
+    counts: dict[int, int] = {}
+    for index, option in enumerate(options):
+        if index >= len(stored_hours):
+            continue
+        hour = stored_hours[index]
+        counts[hour] = counts.get(hour, 0) + option.voter_count
+    return HourVoteCounts(by_hour=counts)
+
+
+def merge_hour_counts(parts: Sequence[HourVoteCounts]) -> HourVoteCounts:
+    merged: dict[int, int] = {}
+    for part in parts:
+        for hour, votes in part.by_hour.items():
+            merged[hour] = merged.get(hour, 0) + votes
+    return HourVoteCounts(by_hour=merged)
+
+
+def meeting_time_announcement(
+    cycle: SuggestionCycle,
+    book: Book | None,
+    day: date | None,
+    hour: int,
+) -> str:
+    title = meeting_poll_title(book) if book is not None else meeting_subject(cycle)
+    clock = format_meeting_hour(hour)
+    if day is None:
+        return f"📅 Встреча по «{title}»: {clock}."
+    return f"📅 Встреча по «{title}»: {format_meeting_day(day)}, {clock}."
+
+
+def meeting_time_admin_prompt(book: Book | None, day: date | None, hour: int) -> str:
+    clock = format_meeting_hour(hour)
+    when = f"{format_meeting_day(day)}, {clock}" if day is not None else clock
+    if book is None:
+        return (
+            f"Время встречи выбрано: {when}.\n"
+            "Напишите /create_meeting — опубликуется приглашение в календарь."
+        )
+    return (
+        f"Время встречи по «{meeting_poll_title(book)}»: {when}.\n"
+        "Напишите /create_meeting — опубликуется приглашение в календарь."
     )
 
 

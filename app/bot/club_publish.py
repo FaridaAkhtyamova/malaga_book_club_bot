@@ -2,21 +2,29 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from datetime import date
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import BufferedInputFile, InputPollOption, Message, PollOption
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.club_chat import club_admin_user_ids, send_html_card
 from app.bot.keyboards.pending_card import pending_card_keyboard
 from app.bot.keyboards.suggest import suggest_dm_keyboard
 from app.bot.media import cover_file_id
-from app.db.models import Book, MeetingPoll, PendingGroupCard, SuggestionCycle, VotePoll
+from app.db.models import (
+    Book,
+    MeetingPoll,
+    MeetingTimePoll,
+    PendingGroupCard,
+    SuggestionCycle,
+    VotePoll,
+)
 from app.services.club_destination import ClubDestination
 from app.services.cycle_service import (
     PublishedMeetingPoll,
+    PublishedMeetingTimePoll,
     PublishedVotePoll,
     format_poll_option,
     poll_question,
@@ -24,11 +32,17 @@ from app.services.cycle_service import (
 from app.services.meeting_invite import MeetingInvite
 from app.services.meeting_poll import (
     MeetingDateOption,
+    MeetingTimeOption,
     meeting_date_runoff_intro,
     meeting_date_runoff_question,
     meeting_poll_intro,
     meeting_poll_question,
+    meeting_time_poll_intro,
+    meeting_time_poll_question,
+    meeting_time_runoff_intro,
+    meeting_time_runoff_question,
     option_date_isos,
+    option_hours,
     option_labels,
 )
 from app.services.pending_group_card import PendingGroupCardService, format_card_preview
@@ -97,7 +111,7 @@ async def publish_vote_polls(
 
 async def stop_polls_quietly(
     bot: Bot,
-    polls: Sequence[VotePoll | MeetingPoll],
+    polls: Sequence[VotePoll | MeetingPoll | MeetingTimePoll],
 ) -> None:
     for poll in polls:
         try:
@@ -279,6 +293,56 @@ async def stop_meeting_polls(
     polls: list[MeetingPoll],
 ) -> list[tuple[MeetingPoll, list[PollOption]]]:
     stopped: list[tuple[MeetingPoll, list[PollOption]]] = []
+    for poll in polls:
+        result = await bot.stop_poll(chat_id=poll.chat_id, message_id=poll.message_id)
+        stopped.append((poll, list(result.options)))
+    return stopped
+
+
+async def publish_meeting_time_poll(
+    bot: Bot,
+    dest: ClubDestination,
+    title: str,
+    choices: list[MeetingTimeOption],
+    *,
+    day: date | None = None,
+    runoff: bool = False,
+    send_intro: bool = True,
+) -> PublishedMeetingTimePoll | None:
+    if send_intro:
+        intro = meeting_time_runoff_intro() if runoff else meeting_time_poll_intro(title, day)
+        await bot.send_message(
+            dest.chat_id,
+            intro,
+            message_thread_id=dest.message_thread_id,
+        )
+    labels = option_labels(choices)
+    poll_options: list[InputPollOption | str] = list(labels)
+    message = await bot.send_poll(
+        chat_id=dest.chat_id,
+        question=meeting_time_runoff_question() if runoff else meeting_time_poll_question(title),
+        options=poll_options,
+        is_anonymous=False,
+        allows_multiple_answers=not runoff,
+        allow_adding_options=False,
+        message_thread_id=dest.message_thread_id,
+    )
+    poll = message.poll
+    if poll is None:
+        return None
+    return PublishedMeetingTimePoll(
+        chat_id=dest.chat_id,
+        message_id=message.message_id,
+        telegram_poll_id=poll.id,
+        option_hours=option_hours(choices),
+    )
+
+
+async def stop_meeting_time_polls(
+    bot: Bot,
+    polls: list[MeetingTimePoll],
+) -> list[tuple[MeetingTimePoll, list[PollOption]]]:
+    stopped: list[tuple[MeetingTimePoll, list[PollOption]]] = []
     for poll in polls:
         result = await bot.stop_poll(chat_id=poll.chat_id, message_id=poll.message_id)
         stopped.append((poll, list(result.options)))

@@ -3,7 +3,7 @@
 ## 1. Project Overview
 Async Telegram bot for a local book club in Malaga. Portfolio piece: layered architecture, async-first Python, Alembic, Docker.
 
-The bot lives in the club group and in private chat. It posts announcements, polls, book cards, and calendar invites to the group, but does not reply there. Conversation (commands, `/suggest`, admin flow) is DM-only, except one-time `/set_group` and `/set_suggest_topic` which must be invoked in the group. Bound chats keep separate settings and cycles; in DM a user works with one active group. On a scheduled (or admin) day it opens book suggestions for the **next** month. Members propose titles via `#выбор_книги` in the group or `/suggest` in DM. Later the bot publishes non-anonymous Telegram polls, can run a runoff on a tie, then a meeting-date poll and a calendar invite (`.ics`).
+The bot lives in the club group and in private chat. It posts announcements, polls, book cards, and calendar invites to the group, but does not reply there. Conversation (commands, `/suggest`, admin flow) is DM-only, except one-time `/set_group` and `/set_suggest_topic` which must be invoked in the group. Bound chats keep separate settings and cycles; in DM a user works with one active group. On a scheduled (or admin) day it opens book suggestions for the **next** month. Members propose titles via `#выбор_книги` in the group or `/suggest` in DM. Later the bot publishes non-anonymous Telegram polls, can run a runoff on a tie, then a meeting-date poll and a calendar invite (`.ics`). An optional meeting-time poll (10:00–19:00) can be started by an admin, typically for weekends.
 
 ## 2. Tech Stack
 - **Language:** Python 3.12+ (`mypy` strict, `ruff`)
@@ -45,21 +45,22 @@ book_club_bot/
 - `User` — telegram id PK, username, full_name, optional `active_club_id` (last club used in DM), `role` (unused; admins are group administrators of a bound club chat)
 - `Book` — catalog + manual (`google_id` unique; manuals use `manual-<uuid>`)
 - `ClubSettings` — one row per bound group: group, optional title and forum topic, suggest/vote days, announce hour
-- `SuggestionCycle` — per club + target month, SUGGESTING|VOTING|CLOSED, optional winner book and meeting date
+- `SuggestionCycle` — per club + target month, SUGGESTING|VOTING|CLOSED, optional winner book, meeting date and hour
 - `Suggestion` — unique per cycle+book
 - `PendingGroupCard` — group `#выбор_книги` posts waiting for admin review before the book poll
-- `VotePoll` / `MeetingPoll` — Telegram poll message ids and option mapping
+- `VotePoll` / `MeetingPoll` / `MeetingTimePoll` — Telegram poll message ids and option mapping
 - `Meeting`, `Vote`, `RSVP` — leftover from an earlier design; not used by the current cycle
 
 ## 5. Features (current)
 - `/start` is DM-only: registers the user and explains how to suggest; `/start suggest` opens the DM suggest flow; `/help` lists member commands (and admin commands if the user is a Telegram admin of a bound group). Commands other than `/set_group` and `/set_suggest_topic` are ignored in the group
 - Group: `#выбор_книги` card (title, author; pages from «стр»/«страниц»; suggester from Telegram user); stored silently for admin review, then included in `/start_vote`. The bot does not reply to the card in the group
 - DM: `/suggest` → Google Books (`intitle` / `printType=books`, then full-text if thin), then Open Library; results are deduped and ranked by title/author match; manual add; confirm before posting the card to the group/topic
-- Admin: `/set_group`, `/set_suggest_topic`, `/set_suggest_day`, `/set_vote_day`, `/open_suggestions`, `/start_vote`, `/close_vote`, `/reset_vote`, `/start_meeting_poll`, `/close_meeting_poll`, `/create_meeting`, `/cycle_status`, `/month_book`. Hidden `/clubs` switches the DM group if the user belongs to more than one bound chat
+- Admin: `/set_group`, `/set_suggest_topic`, `/set_suggest_day`, `/set_vote_day`, `/open_suggestions`, `/start_vote`, `/close_vote`, `/reset_vote`, `/start_meeting_poll`, `/close_meeting_poll`, `/start_meeting_time_poll`, `/close_meeting_time_poll`, `/create_meeting`, `/cycle_status`, `/month_book`. Hidden `/clubs` switches the DM group if the user belongs to more than one bound chat
 - `/close_vote` with a single winner also publishes the meeting-date poll; `/start_meeting_poll` works without a closed book vote and asks the admin for a title if none is stored
-- `/reset_vote` stops book and meeting polls without picking a winner and republishes book polls with suggestions from the 1st of the cycle's collection month
-- `/close_meeting_poll` with a single date publishes the date in the group (no admin command in that message) and DMs admins to run `/create_meeting`
-- `/create_meeting` uses the poll-chosen meeting date when it exists; otherwise the admin types the date (`25.09` / `25.09.2026`). If there is no winner book, the admin types the title before the time. The group gets `event.ics`.
+- `/reset_vote` stops book, date, and time polls without picking a winner and republishes book polls with suggestions from the 1st of the cycle's collection month
+- `/close_meeting_poll` with a single date publishes the date in the group (no admin command in that message) and DMs admins to run `/create_meeting`; weekdays are usually 19:00, so the time poll is not started automatically
+- `/start_meeting_time_poll` publishes a 10:00–19:00 hourly poll (typically weekends); `/close_meeting_time_poll` with a single hour publishes date and time in the group and DMs admins to run `/create_meeting`
+- `/create_meeting` uses the poll-chosen meeting date and hour when they exist; otherwise the admin types the missing pieces (`25.09` / `25.09.2026`, then time). If there is no winner book, the admin types the title before the time. The group gets `event.ics`.
 - Polls: `is_anonymous=False`; max 10 options; remainder of 1 is split as 9+2; first round allows multiple answers
 - Scheduler (hourly): for each bound club, on `suggest_day` at/after `announce_hour` opens next month; on `vote_day` publishes book polls unless unread group cards are waiting for admin review. Closing polls is always manual
 - `DEBUG=true` lets `/open_suggestions` reset the current month for local testing

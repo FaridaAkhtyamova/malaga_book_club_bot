@@ -143,6 +143,7 @@ class SuggestionCycle(Base):
     opened_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     winner_book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True)
     winner_meeting_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    winner_meeting_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     club: Mapped[ClubSettings] = relationship(back_populates="cycles")
     suggestions: Mapped[list["Suggestion"]] = relationship(
@@ -155,6 +156,9 @@ class SuggestionCycle(Base):
         back_populates="cycle", cascade="all, delete-orphan"
     )
     meeting_polls: Mapped[list["MeetingPoll"]] = relationship(
+        back_populates="cycle", cascade="all, delete-orphan"
+    )
+    meeting_time_polls: Mapped[list["MeetingTimePoll"]] = relationship(
         back_populates="cycle", cascade="all, delete-orphan"
     )
     winner: Mapped[Book | None] = relationship(
@@ -191,6 +195,21 @@ class MeetingPoll(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     cycle: Mapped[SuggestionCycle] = relationship(back_populates="meeting_polls")
+
+
+class MeetingTimePoll(Base):
+    __tablename__ = "meeting_time_polls"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    cycle_id: Mapped[int] = mapped_column(ForeignKey("suggestion_cycles.id"), nullable=False)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    telegram_poll_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    option_hours: Mapped[list[int]] = mapped_column(JSONB, nullable=False)
+    is_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    cycle: Mapped[SuggestionCycle] = relationship(back_populates="meeting_time_polls")
 
 
 class PendingGroupCard(Base):

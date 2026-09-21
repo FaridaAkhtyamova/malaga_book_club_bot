@@ -13,7 +13,7 @@ from app.bot.club_context import club_from_state, remember_club, require_admin_c
 from app.bot.club_publish import publish_meeting_invite
 from app.bot.states.meeting import MeetingInviteStates
 from app.core.config import get_settings
-from app.services.club_destination import destination_of
+from app.services.club_destination import ClubDestination, destination_of
 from app.services.cycle_service import CycleService
 from app.services.meeting_invite import (
     InvalidMeetingDateError,
@@ -64,6 +64,13 @@ def _stored_day(data: dict[str, object]) -> date | None:
     return None
 
 
+def _stored_hour(data: dict[str, object]) -> int | None:
+    raw_hour = data.get("meeting_hour")
+    if isinstance(raw_hour, int) and 0 <= raw_hour <= 23:
+        return raw_hour
+    return None
+
+
 def _is_past_day(meeting_day: date) -> bool:
     today = datetime.now(ZoneInfo(get_settings().TIMEZONE)).date()
     return meeting_day < today
@@ -72,12 +79,17 @@ def _is_past_day(meeting_day: date) -> bool:
 async def _prompt_meeting_step(
     message: Message,
     state: FSMContext,
+    bot: Bot,
+    dest: ClubDestination,
     *,
     meeting_day: date | None,
     book_title: str | None,
+    meeting_hour: int | None,
 ) -> None:
     if book_title is not None:
         await state.update_data(book_title=book_title)
+    if meeting_hour is not None:
+        await state.update_data(meeting_hour=meeting_hour)
     if meeting_day is None:
         await state.set_state(MeetingInviteStates.waiting_date)
         await message.answer(_ASK_DATE)
@@ -87,8 +99,54 @@ async def _prompt_meeting_step(
         await state.set_state(MeetingInviteStates.waiting_title)
         await message.answer(_ask_title(meeting_day))
         return
-    await state.set_state(MeetingInviteStates.waiting_time)
-    await message.answer(_ask_time(meeting_day, book_title))
+    if meeting_hour is None:
+        await state.set_state(MeetingInviteStates.waiting_time)
+        await message.answer(_ask_time(meeting_day, book_title))
+        return
+    await _publish_invite(
+        message,
+        state,
+        bot,
+        dest,
+        meeting_day,
+        meeting_hour,
+        0,
+        book_title,
+    )
+
+
+async def _publish_invite(
+    message: Message,
+    state: FSMContext,
+    bot: Bot,
+    dest: ClubDestination,
+    meeting_day: date,
+    hour: int,
+    minute: int,
+    book_title: str,
+    *,
+    day_offset: int = 0,
+) -> None:
+    try:
+        start = build_meeting_start(
+            meeting_day + timedelta(days=day_offset),
+            hour,
+            minute,
+        )
+    except MeetingInPastError:
+        await state.set_state(MeetingInviteStates.waiting_time)
+        await message.answer("Это время уже прошло. Напишите другое время.")
+        return
+
+    invite = build_meeting_invite(start, book_title=book_title)
+    await publish_meeting_invite(bot, dest, invite)
+    await state.clear()
+
+    same_thread = (
+        message.chat.id == dest.chat_id and message.message_thread_id == dest.message_thread_id
+    )
+    if not same_thread:
+        await message.answer("Приглашение в календарь опубликовано в группе.")
 
 
 @router.message(Command("create_meeting"))
@@ -107,8 +165,16 @@ async def cmd_create_meeting(
         return
 
     await remember_club(state, club)
-    book_title, meeting_day = await CycleService(session, club).get_selected_meeting()
-    await _prompt_meeting_step(message, state, meeting_day=meeting_day, book_title=book_title)
+    book_title, meeting_day, meeting_hour = await CycleService(session, club).get_selected_meeting()
+    await _prompt_meeting_step(
+        message,
+        state,
+        bot,
+        dest,
+        meeting_day=meeting_day,
+        book_title=book_title,
+        meeting_hour=meeting_hour,
+    )
 
 
 @router.message(Command("cancel"), _MEETING_STATES)
@@ -149,9 +215,27 @@ async def on_meeting_date(
 
     data = await state.get_data()
     book_title = _stored_title(data)
-    if book_title is None:
-        book_title, _ = await service.get_selected_meeting()
-    await _prompt_meeting_step(message, state, meeting_day=meeting_day, book_title=book_title)
+    meeting_hour = _stored_hour(data)
+    if book_title is None or meeting_hour is None:
+        cycle_title, _, cycle_hour = await service.get_selected_meeting()
+        if book_title is None:
+            book_title = cycle_title
+        if meeting_hour is None:
+            meeting_hour = cycle_hour
+    dest = destination_of(club)
+    if dest is None:
+        await state.clear()
+        await message.answer("Сначала привяжите группу командой /set_group.")
+        return
+    await _prompt_meeting_step(
+        message,
+        state,
+        bot,
+        dest,
+        meeting_day=meeting_day,
+        book_title=book_title,
+        meeting_hour=meeting_hour,
+    )
 
 
 @router.message(MeetingInviteStates.waiting_title, F.text)
@@ -168,14 +252,30 @@ async def on_meeting_title(
 
     data = await state.get_data()
     meeting_day = _stored_day(data)
-    if meeting_day is None:
-        club = await club_from_state(state, session)
-        if club is None:
-            club = await require_admin_club(message, bot, session)
-        if club is None:
-            return
-        _, meeting_day = await CycleService(session, club).get_selected_meeting()
-    await _prompt_meeting_step(message, state, meeting_day=meeting_day, book_title=title)
+    meeting_hour = _stored_hour(data)
+    club = await club_from_state(state, session)
+    if club is None:
+        club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    dest = destination_of(club)
+    if dest is None:
+        await state.clear()
+        await message.answer("Сначала привяжите группу командой /set_group.")
+        return
+    if meeting_day is None or meeting_hour is None:
+        _, cycle_day, cycle_hour = await CycleService(session, club).get_selected_meeting()
+        meeting_day = meeting_day or cycle_day
+        meeting_hour = meeting_hour if meeting_hour is not None else cycle_hour
+    await _prompt_meeting_step(
+        message,
+        state,
+        bot,
+        dest,
+        meeting_day=meeting_day,
+        book_title=title,
+        meeting_hour=meeting_hour,
+    )
 
 
 @router.message(MeetingInviteStates.waiting_time, F.text)
@@ -204,12 +304,18 @@ async def on_meeting_time(
     meeting_day = _stored_day(data)
     book_title = _stored_title(data)
     if meeting_day is None or book_title is None:
-        cycle_title, cycle_day = await CycleService(session, club).get_selected_meeting()
+        cycle_title, cycle_day, _ = await CycleService(session, club).get_selected_meeting()
         meeting_day = meeting_day or cycle_day
         book_title = book_title or cycle_title
         if meeting_day is None or book_title is None:
             await _prompt_meeting_step(
-                message, state, meeting_day=meeting_day, book_title=book_title
+                message,
+                state,
+                bot,
+                dest,
+                meeting_day=meeting_day,
+                book_title=book_title,
+                meeting_hour=None,
             )
             return
         await state.update_data(book_title=book_title, meeting_date=meeting_day.isoformat())
@@ -224,22 +330,14 @@ async def on_meeting_time(
         await message.answer(parsed.quip)
         return
 
-    try:
-        start = build_meeting_start(
-            meeting_day + timedelta(days=parsed.day_offset),
-            parsed.hour,
-            parsed.minute,
-        )
-    except MeetingInPastError:
-        await message.answer("Это время уже прошло. Напишите другое время.")
-        return
-
-    invite = build_meeting_invite(start, book_title=book_title)
-    await publish_meeting_invite(bot, dest, invite)
-    await state.clear()
-
-    same_thread = (
-        message.chat.id == dest.chat_id and message.message_thread_id == dest.message_thread_id
+    await _publish_invite(
+        message,
+        state,
+        bot,
+        dest,
+        meeting_day,
+        parsed.hour,
+        parsed.minute,
+        book_title,
+        day_offset=parsed.day_offset,
     )
-    if not same_thread:
-        await message.answer("Приглашение в календарь опубликовано в группе.")
