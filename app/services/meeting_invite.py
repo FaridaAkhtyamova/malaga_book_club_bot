@@ -224,8 +224,7 @@ def _when_line(start: datetime, end: datetime) -> str:
 
 
 def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
-    tz_name = get_settings().TIMEZONE
-    tz = ZoneInfo(tz_name)
+    tz = ZoneInfo(get_settings().TIMEZONE)
     local_start = start.astimezone(tz)
     uid = f"bookclub-{local_start.strftime('%Y%m%d-%H%M%S')}@malagabookclub"
     lines = [
@@ -236,11 +235,11 @@ def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
         "METHOD:PUBLISH",
         "BEGIN:VEVENT",
         f"UID:{uid}",
-        f"DTSTAMP:{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}",
+        f"DTSTAMP:{_utc_stamp(datetime.now(UTC))}",
         f"SUMMARY:{_ics_escape(title)}",
         f"LOCATION:{_ics_escape('Málaga')}",
-        f"DTSTART;TZID={tz_name}:{_local_stamp(local_start)}",
-        f"DTEND;TZID={tz_name}:{_local_stamp(end.astimezone(tz))}",
+        f"DTSTART:{_utc_stamp(start)}",
+        f"DTEND:{_utc_stamp(end)}",
         "BEGIN:VALARM",
         "TRIGGER:-PT1H",
         "ACTION:DISPLAY",
@@ -282,8 +281,8 @@ def _apple_calendar_url(title: str, start: datetime, end: datetime) -> str:
     return f"https://calndr.link/d/event/?{query}"
 
 
-def _local_stamp(moment: datetime) -> str:
-    return moment.strftime("%Y%m%dT%H%M%S")
+def _utc_stamp(moment: datetime) -> str:
+    return moment.astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def _ics_escape(text: str) -> str:

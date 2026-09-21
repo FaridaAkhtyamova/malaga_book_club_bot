@@ -43,8 +43,9 @@ def test_ics_matches_iphone_event_template() -> None:
     assert re.search(r"DTSTAMP:\d{8}T\d{6}Z\r\n", text)
     assert "SUMMARY:Книжный Клуб: Винни-Пух и все-все-все\r\n" in text
     assert "LOCATION:Málaga\r\n" in text
-    assert "DTSTART;TZID=Europe/Madrid:20260924T190000\r\n" in text
-    assert "DTEND;TZID=Europe/Madrid:20260924T203000\r\n" in text
+    assert "DTSTART:20260924T170000Z\r\n" in text
+    assert "DTEND:20260924T183000Z\r\n" in text
+    assert "TZID=" not in text
     assert "TRIGGER:-PT1H\r\n" in text
     assert "BEGIN:VTIMEZONE" not in text
     assert b"\r\n " not in invite.ics_bytes
@@ -52,13 +53,19 @@ def test_ics_matches_iphone_event_template() -> None:
     assert invite.filename == ICS_FILENAME == "event.ics"
 
 
-def test_ics_keeps_winter_madrid_wall_clock() -> None:
-    start = datetime(2026, 12, 25, 19, 0, tzinfo=ZoneInfo("Europe/Madrid"))
-    invite = build_meeting_invite(start, book_title="Dune")
+def test_ics_converts_madrid_wall_clock_to_utc() -> None:
+    start = datetime(2026, 9, 24, 11, 0, tzinfo=ZoneInfo("Europe/Madrid"))
+    invite = build_meeting_invite(start, book_title="Винни-Пух и все-все-все")
     text = invite.ics_bytes.decode("utf-8")
 
-    assert "DTSTART;TZID=Europe/Madrid:20261225T190000" in text
-    assert "DTEND;TZID=Europe/Madrid:20261225T203000" in text
+    assert "UID:bookclub-20260924-110000@malagabookclub" in text
+    assert "DTSTART:20260924T090000Z" in text
+    assert "DTEND:20260924T103000Z" in text
+
+    winter = datetime(2026, 12, 25, 19, 0, tzinfo=ZoneInfo("Europe/Madrid"))
+    winter_text = build_meeting_invite(winter, book_title="Dune").ics_bytes.decode("utf-8")
+    assert "DTSTART:20261225T180000Z" in winter_text
+    assert "DTEND:20261225T193000Z" in winter_text
 
 
 def test_ics_keeps_summary_on_one_line() -> None:
@@ -105,7 +112,7 @@ def test_public_ics_url_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
     assert restored is not None
     assert restored.title == invite.title
     assert restored.start == invite.start
-    assert "DTSTART;TZID=Europe/Madrid:20260924T190000" in restored.ics_bytes.decode("utf-8")
+    assert "DTSTART:20260924T170000Z" in restored.ics_bytes.decode("utf-8")
 
 
 async def test_ics_http_serves_text_calendar() -> None:
@@ -127,7 +134,7 @@ async def test_ics_http_serves_text_calendar() -> None:
         body = await response.read()
         text = body.decode("utf-8")
         assert "BEGIN:VCALENDAR" in text
-        assert "DTSTART;TZID=Europe/Madrid:20260924T190000" in text
+        assert "DTSTART:20260924T170000Z" in text
 
         missing = await client.get("/invite/not-a-token.ics")
         assert missing.status == 404
