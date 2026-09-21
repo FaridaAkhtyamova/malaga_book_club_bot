@@ -7,6 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
@@ -59,7 +60,7 @@ class MeetingInvite:
     end: datetime
     ics_bytes: bytes
     caption: str
-    ics_url: str | None
+    ics_url: str
     filename: str = ICS_FILENAME
 
 
@@ -118,11 +119,12 @@ def build_meeting_invite(start: datetime, *, book_title: str) -> MeetingInvite:
     return build_meeting_invite_from_event(title=event_title(book_title), start=start)
 
 
-def public_ics_url(title: str, start: datetime) -> str | None:
+def public_ics_url(title: str, start: datetime, end: datetime | None = None) -> str:
     base = get_settings().PUBLIC_BASE_URL
-    if base is None:
-        return None
-    return f"{base}/invite/{encode_invite_token(title, start)}.ics"
+    if base is not None:
+        return f"{base}/invite/{encode_invite_token(title, start)}.ics"
+    meeting_end = end if end is not None else start + MEETING_DURATION
+    return _safari_ics_url(title, start, meeting_end)
 
 
 def encode_invite_token(title: str, start: datetime) -> str:
@@ -152,7 +154,7 @@ def build_meeting_invite_from_event(*, title: str, start: datetime) -> MeetingIn
         end=end,
         ics_bytes=_ics_bytes(title, start, end),
         caption=_invite_caption(title, start, end),
-        ics_url=public_ics_url(title, start),
+        ics_url=public_ics_url(title, start, end),
     )
 
 
@@ -253,8 +255,23 @@ def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
 def _invite_caption(title: str, start: datetime, end: datetime) -> str:
     return (
         f"🗓️ {title}\n{_when_line(start, end)}\n\n"
-        "Нажмите на файл, чтобы добавить запись в календарь."
+        "iPhone: нажмите «Добавить в календарь»."
     )
+
+
+def _safari_ics_url(title: str, start: datetime, end: datetime) -> str:
+    query = urlencode(
+        {
+            "subject": title,
+            "dtstart": start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "dtend": end.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "location": "Málaga",
+            "reminder": "60",
+            "description": _when_line(start, end),
+        },
+        quote_via=quote,
+    )
+    return f"https://ics.agical.io/?{query}"
 
 
 def _local_stamp(moment: datetime) -> str:

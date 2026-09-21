@@ -25,7 +25,7 @@ def test_invite_caption_shows_quoted_title_and_malaga_time() -> None:
     assert invite.caption == (
         '🗓️ Книжный Клуб: "Винни-Пух и все-все-все"\n'
         "24 сентября 2026, 19:00–20:30 (Малага)\n\n"
-        "Нажмите на файл, чтобы добавить запись в календарь."
+        "iPhone: нажмите «Добавить в календарь»."
     )
     assert invite.filename == "event.ics"
 
@@ -81,11 +81,13 @@ def test_ics_upload_uses_text_calendar_mime() -> None:
     assert document_upload_fields("cover.jpg") == {"filename": "cover.jpg"}
 
 
-def test_empty_public_url_has_no_inline_link(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_empty_public_url_uses_safari_ics_link(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(get_settings(), "PUBLIC_BASE_URL", None)
     start = datetime(2026, 9, 25, 19, 0, tzinfo=ZoneInfo("Europe/Madrid"))
     invite = build_meeting_invite(start, book_title="Dune")
-    assert invite.ics_url is None
+    assert invite.ics_url.startswith("https://ics.agical.io/?")
+    assert "2026-09-25T17%3A00%3A00Z" in invite.ics_url
+    assert "2026-09-25T18%3A30%3A00Z" in invite.ics_url
 
 
 def test_public_ics_url_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
