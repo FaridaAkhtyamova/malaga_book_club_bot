@@ -20,8 +20,6 @@ class Settings(BaseSettings):
     GOOGLE_BOOKS_API_KEY: str | None = Field(default=None, alias="GOOGLE_BOOKS_API_KEY")
     TIMEZONE: str = Field(default="Europe/Madrid", alias="TIMEZONE")
     GROUP_CHAT_ID: int | None = Field(default=None, alias="GROUP_CHAT_ID")
-    PUBLIC_BASE_URL: str | None = Field(default=None, alias="PUBLIC_BASE_URL")
-    CALENDAR_HTTP_PORT: int = Field(default=8080, alias="CALENDAR_HTTP_PORT")
     DEBUG: bool = Field(default=False, alias="DEBUG")
 
     @field_validator("GROUP_CHAT_ID", mode="before")
@@ -29,15 +27,6 @@ class Settings(BaseSettings):
     def empty_group_chat_id(cls, value: object) -> object:
         if value == "":
             return None
-        return value
-
-    @field_validator("PUBLIC_BASE_URL", mode="before")
-    @classmethod
-    def empty_public_base_url(cls, value: object) -> object:
-        if value == "":
-            return None
-        if isinstance(value, str):
-            return value.rstrip("/")
         return value
 
     @property

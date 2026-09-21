@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
 from app.core.config import get_settings
@@ -15,7 +10,6 @@ from app.core.config import get_settings
 MEETING_DURATION = timedelta(minutes=90)
 ICS_FILENAME = "event.ics"
 ICS_CONTENT_TYPE = "text/calendar; charset=utf-8"
-_TOKEN_SIG_LEN = 24
 
 _DATE_FULL = re.compile(r"^(\d{1,2})[./](\d{1,2})[./](\d{4})$")
 _DATE_SHORT = re.compile(r"^(\d{1,2})[./](\d{1,2})$")
@@ -60,7 +54,6 @@ class MeetingInvite:
     end: datetime
     ics_bytes: bytes
     caption: str
-    ics_url: str
     filename: str = ICS_FILENAME
 
 
@@ -116,34 +109,7 @@ def build_meeting_start(
 
 
 def build_meeting_invite(start: datetime, *, book_title: str) -> MeetingInvite:
-    return build_meeting_invite_from_event(title=event_title(book_title), start=start)
-
-
-def public_ics_url(title: str, start: datetime, end: datetime | None = None) -> str:
-    meeting_end = end if end is not None else start + MEETING_DURATION
-    return _apple_calendar_url(title, start, meeting_end)
-
-
-def encode_invite_token(title: str, start: datetime) -> str:
-    payload = json.dumps(
-        {"t": title, "s": start.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")},
-        ensure_ascii=False,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    body = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
-    signature = hmac.new(_token_key(), body.encode("ascii"), hashlib.sha256).hexdigest()
-    return f"{body}.{signature[:_TOKEN_SIG_LEN]}"
-
-
-def invite_from_token(token: str) -> MeetingInvite | None:
-    parsed = _decode_invite_token(token)
-    if parsed is None:
-        return None
-    title, start = parsed
-    return build_meeting_invite_from_event(title=title, start=start)
-
-
-def build_meeting_invite_from_event(*, title: str, start: datetime) -> MeetingInvite:
+    title = event_title(book_title)
     end = start + MEETING_DURATION
     return MeetingInvite(
         title=title,
@@ -151,39 +117,7 @@ def build_meeting_invite_from_event(*, title: str, start: datetime) -> MeetingIn
         end=end,
         ics_bytes=_ics_bytes(title, start, end),
         caption=_invite_caption(title, start, end),
-        ics_url=public_ics_url(title, start, end),
     )
-
-
-def _decode_invite_token(token: str) -> tuple[str, datetime] | None:
-    body, separator, signature = token.partition(".")
-    if not separator or not body or not signature:
-        return None
-    expected = hmac.new(_token_key(), body.encode("ascii"), hashlib.sha256).hexdigest()
-    if len(signature) != _TOKEN_SIG_LEN:
-        return None
-    if not hmac.compare_digest(signature, expected[:_TOKEN_SIG_LEN]):
-        return None
-    padding = "=" * (-len(body) % 4)
-    try:
-        raw = json.loads(base64.urlsafe_b64decode(body + padding).decode("utf-8"))
-    except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    if not isinstance(raw, dict):
-        return None
-    title = raw.get("t")
-    start_raw = raw.get("s")
-    if not isinstance(title, str) or not isinstance(start_raw, str):
-        return None
-    try:
-        start = datetime.strptime(start_raw, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-    except ValueError:
-        return None
-    return title, start
-
-
-def _token_key() -> bytes:
-    return get_settings().BOT_TOKEN.encode("utf-8")
 
 
 def _localized_now(now: datetime | None) -> datetime:
@@ -252,10 +186,7 @@ def _ics_bytes(title: str, start: datetime, end: datetime) -> bytes:
 
 
 def _invite_caption(title: str, start: datetime, end: datetime) -> str:
-    return (
-        f"🗓️ {_quoted_display_title(title)}\n{_when_line(start, end)}\n\n"
-        "iPhone: нажмите «Добавить в календарь»."
-    )
+    return f"🗓️ {_quoted_display_title(title)}\n{_when_line(start, end)}"
 
 
 def _quoted_display_title(title: str) -> str:
@@ -263,22 +194,6 @@ def _quoted_display_title(title: str) -> str:
     if title.startswith(prefix):
         return f'{prefix}"{title.removeprefix(prefix)}"'
     return title
-
-
-def _apple_calendar_url(title: str, start: datetime, end: datetime) -> str:
-    tz_name = get_settings().TIMEZONE
-    local_start = start.astimezone(ZoneInfo(tz_name))
-    local_end = end.astimezone(ZoneInfo(tz_name))
-    query = urlencode(
-        {
-            "service": "apple",
-            "start": local_start.strftime("%Y-%m-%dT%H:%M:%S"),
-            "end": local_end.strftime("%Y-%m-%dT%H:%M:%S"),
-            "title": title,
-            "timezone": tz_name,
-        }
-    )
-    return f"https://calndr.link/d/event/?{query}"
 
 
 def _utc_stamp(moment: datetime) -> str:

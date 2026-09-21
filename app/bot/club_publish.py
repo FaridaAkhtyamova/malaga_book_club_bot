@@ -10,7 +10,6 @@ from aiogram.types import BufferedInputFile, InputPollOption, Message, PollOptio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.club_chat import club_admin_user_ids, send_html_card
-from app.bot.keyboards.meeting import meeting_invite_keyboard
 from app.bot.keyboards.pending_card import pending_card_keyboard
 from app.bot.keyboards.suggest import suggest_dm_keyboard
 from app.bot.media import cover_file_id
@@ -233,7 +232,6 @@ async def publish_meeting_invite(bot: Bot, dest: ClubDestination, invite: Meetin
         document=document,
         caption=invite.caption,
         message_thread_id=dest.message_thread_id,
-        reply_markup=meeting_invite_keyboard(invite.ics_url),
         disable_content_type_detection=True,
     )
 

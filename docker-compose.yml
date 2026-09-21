@@ -24,8 +24,6 @@ services:
     environment:
       DB_HOST: postgres
       DB_PORT: "5432"
-    ports:
-      - "8080:8080"
     depends_on:
       - postgres
     restart: unless-stopped
