@@ -8,4 +8,5 @@ class MeetingInviteStates(StatesGroup):
 
 
 class MeetingPollStates(StatesGroup):
+    waiting_book_choice = State()
     waiting_title = State()

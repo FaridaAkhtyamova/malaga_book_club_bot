@@ -367,7 +367,14 @@ class CycleService:
             page_count=None,
         )
         await self.apply_winner(cycle, book)
+        await self.clear_meeting_title(cycle)
         return book
+
+    async def apply_meeting_title(self, cycle: SuggestionCycle, title: str) -> SuggestionCycle:
+        return await self.cycle_vote_repo.set_meeting_title(cycle, title[:255])
+
+    async def clear_meeting_title(self, cycle: SuggestionCycle) -> SuggestionCycle:
+        return await self.cycle_vote_repo.clear_meeting_title(cycle)
 
     async def reopen_suggestions_after_empty_vote(
         self,
@@ -404,6 +411,9 @@ class CycleService:
         meeting_hour = None if cycle is None else cycle.winner_meeting_hour
         if cycle is None:
             return None, meeting_day, meeting_hour
+        override = (cycle.meeting_title or "").strip() or None
+        if override is not None:
+            return override, meeting_day, meeting_hour
         book = await self.book_for_cycle(cycle)
         if book is None:
             return None, meeting_day, meeting_hour

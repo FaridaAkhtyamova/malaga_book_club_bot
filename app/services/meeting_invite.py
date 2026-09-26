@@ -70,7 +70,7 @@ class ParsedMeetingTime:
 
 
 def event_title(book_title: str) -> str:
-    return f"Книжный Клуб: {_bare_book_title(book_title)}"
+    return f"Книжный Клуб: {bare_book_title(book_title)}"
 
 
 def parse_meeting_date(raw: str, *, now: datetime | None = None) -> date:
@@ -184,7 +184,7 @@ def _valid_date(day: int, month: int, year: int) -> date:
         raise InvalidMeetingDateError("Такой даты нет.") from exc
 
 
-def _bare_book_title(book_title: str) -> str:
+def bare_book_title(book_title: str) -> str:
     text = book_title.strip()
     if len(text) >= 2 and (
         (text.startswith("«") and text.endswith("»"))

@@ -5,12 +5,13 @@ from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.admin_filter import AdminFilter
 from app.bot.club_chat import send_html_card
 from app.bot.club_context import club_from_state, remember_club, require_admin_club
+from app.bot.callbacks.meeting import MeetingPollBookCallback
 from app.bot.club_publish import (
     notify_admins,
     publish_meeting_poll,
@@ -24,6 +25,7 @@ from app.bot.club_publish import (
     stop_vote_polls,
 )
 from app.bot.commands import setup_bot_commands
+from app.bot.keyboards.meeting import meeting_poll_book_keyboard
 from app.bot.states.meeting import MeetingPollStates
 from app.db.models import SuggestionCycle
 from app.repositories.settings_repo import SettingsRepository
@@ -56,6 +58,7 @@ from app.services.meeting_poll import (
     chunk_hours_for_polls,
     format_meeting_day,
     format_meeting_hour,
+    format_manual_meeting_title,
     meeting_date_admin_prompt,
     meeting_date_announcement,
     meeting_poll_options,
@@ -76,10 +79,12 @@ router = Router()
 router.message.filter(AdminFilter())
 dm_router = Router()
 dm_router.message.filter(F.chat.type == ChatType.PRIVATE)
+dm_router.callback_query.filter(AdminFilter(), F.message.chat.type == ChatType.PRIVATE)
 
 _CLEAR_TOPIC = frozenset({"clear", "off", "none", "сброс"})
 _MEETING_POLL_STATES = StateFilter(MeetingPollStates)
-_ASK_POLL_TITLE = "Книга ещё не выбрана. Напишите название для опроса дат."
+_ASK_POLL_TITLE = "Напишите название книги для опроса дат."
+_ASK_POLL_BOOK = "Встреча по книге месяца или для другой книги?"
 _POLL_CANCELLED = "Запуск опроса дат отменён."
 
 
@@ -369,12 +374,77 @@ async def cmd_start_meeting_poll(
     book = await service.book_for_cycle(cycle)
     if book is None:
         await remember_club(state, club)
+        await state.update_data(meeting_title_override=False)
         await state.set_state(MeetingPollStates.waiting_title)
         await message.answer(_ASK_POLL_TITLE)
         return
 
+    await remember_club(state, club)
+    await state.set_state(MeetingPollStates.waiting_book_choice)
+    await message.answer(_ASK_POLL_BOOK, reply_markup=meeting_poll_book_keyboard())
+
+
+@dm_router.callback_query(
+    MeetingPollStates.waiting_book_choice,
+    MeetingPollBookCallback.filter(),
+)
+async def on_meeting_poll_book_choice(
+    callback: CallbackQuery,
+    callback_data: MeetingPollBookCallback,
+    session: AsyncSession,
+    state: FSMContext,
+    bot: Bot,
+) -> None:
+    origin = callback.message
+    if origin is None:
+        await callback.answer()
+        return
+
+    club = await club_from_state(state, session)
+    if club is None:
+        user = callback.from_user
+        club = await require_admin_club(
+            origin,
+            bot,
+            session,
+            user_id=None if user is None else user.id,
+        )
+    if club is None:
+        await callback.answer()
+        await state.clear()
+        return
+    dest = destination_of(club)
+    if dest is None:
+        await callback.answer()
+        await state.clear()
+        await origin.answer("Сначала привяжите группу командой /set_group.")
+        return
+
+    service = CycleService(session, club)
+    try:
+        cycle = await service.prepare_meeting_poll()
+    except (CycleNotOpenError, MeetingPollsAlreadyOpenError) as exc:
+        await callback.answer()
+        await state.clear()
+        await origin.answer(str(exc))
+        return
+
+    with suppress(TelegramAPIError):
+        await origin.edit_reply_markup(reply_markup=None)
+
+    if callback_data.action == "other":
+        await remember_club(state, club)
+        await state.update_data(meeting_title_override=True)
+        await state.set_state(MeetingPollStates.waiting_title)
+        await callback.answer()
+        await origin.answer(_ASK_POLL_TITLE)
+        return
+
+    book = await service.book_for_cycle(cycle)
+    await service.clear_meeting_title(cycle)
+    await callback.answer()
     await state.clear()
-    await _finish_meeting_poll(message, bot, dest, service, cycle, meeting_subject(cycle, book))
+    await _finish_meeting_poll(origin, bot, dest, service, cycle, meeting_subject(cycle, book))
 
 
 @dm_router.message(Command("cancel"), _MEETING_POLL_STATES)
@@ -394,7 +464,7 @@ async def on_meeting_poll_title(
     state: FSMContext,
     bot: Bot,
 ) -> None:
-    title = (message.text or "").strip()
+    title = format_manual_meeting_title(message.text or "")
     if not title:
         await message.answer(_ASK_POLL_TITLE)
         return
@@ -419,7 +489,13 @@ async def on_meeting_poll_title(
         await message.answer(str(exc))
         return
 
-    book = await service.apply_manual_meeting_book(cycle, title)
+    data = await state.get_data()
+    override = data.get("meeting_title_override") is True
+    if override:
+        await service.apply_meeting_title(cycle, title)
+        book = await service.book_for_cycle(cycle)
+    else:
+        book = await service.apply_manual_meeting_book(cycle, title)
     await state.clear()
     await _finish_meeting_poll(message, bot, dest, service, cycle, meeting_subject(cycle, book))
 

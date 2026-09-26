@@ -14,6 +14,7 @@ from app.services.cycle_service import MONTH_NAMES_RU
 from app.services.meeting_invite import (
     MONTH_GENITIVE_RU,
     InvalidMeetingDateError,
+    bare_book_title,
     parse_meeting_date,
 )
 
@@ -90,7 +91,17 @@ def meeting_poll_title(book: Book) -> str:
     return book.title.strip() or "книга месяца"
 
 
+def format_manual_meeting_title(raw: str) -> str:
+    text = bare_book_title(raw)
+    if not text:
+        return text
+    return " ".join(word[0].upper() + word[1:] if word else word for word in text.split())
+
+
 def meeting_subject(cycle: SuggestionCycle, book: Book | None = None) -> str:
+    override = (cycle.meeting_title or "").strip()
+    if override:
+        return override
     if book is not None:
         return meeting_poll_title(book)
     return f"книга на {MONTH_NAMES_RU[cycle.target_month]}"

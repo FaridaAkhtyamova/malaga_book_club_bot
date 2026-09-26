@@ -144,6 +144,7 @@ class SuggestionCycle(Base):
     winner_book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True)
     winner_meeting_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     winner_meeting_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    meeting_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     club: Mapped[ClubSettings] = relationship(back_populates="cycles")
     suggestions: Mapped[list["Suggestion"]] = relationship(

@@ -69,8 +69,25 @@ class CycleVoteRepository:
         await self.session.refresh(cycle)
         return cycle
 
+    async def set_meeting_title(
+        self,
+        cycle: SuggestionCycle,
+        title: str,
+    ) -> SuggestionCycle:
+        cycle.meeting_title = title
+        await self.session.commit()
+        await self.session.refresh(cycle)
+        return cycle
+
+    async def clear_meeting_title(self, cycle: SuggestionCycle) -> SuggestionCycle:
+        cycle.meeting_title = None
+        await self.session.commit()
+        await self.session.refresh(cycle)
+        return cycle
+
     async def clear_winner(self, cycle: SuggestionCycle) -> SuggestionCycle:
         cycle.winner_book_id = None
+        cycle.meeting_title = None
         await self.session.commit()
         await self.session.refresh(cycle)
         return cycle
