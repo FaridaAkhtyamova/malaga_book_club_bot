@@ -1,4 +1,5 @@
 from datetime import date
+import logging
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
@@ -114,6 +115,15 @@ async def cmd_set_suggest_topic(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
+# --- ДЕБАГ В ЛОГИ ДОКЕРА ---
+    logging.warning(
+        f"DEBUG cmd_set_suggest_topic | "
+        f"chat_type: {message.chat.type}, "
+        f"is_forum: {getattr(message.chat, 'is_forum', False)}, "
+        f"thread_id: {message.message_thread_id}"
+    )
+    # ---------------------------
+    # ------------------
     arg = (command.args or "").strip().casefold()
     if arg in _CLEAR_TOPIC:
         if message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
@@ -139,11 +149,14 @@ async def cmd_set_suggest_topic(
 
     thread_id = message.message_thread_id
     if thread_id is None:
-        await message.answer(
-            "Включите топики и вызовите /set_suggest_topic из нужной ветки. "
-            "Сброс: /set_suggest_topic clear"
-        )
-        return
+        if getattr(message.chat, 'is_forum', False):
+            thread_id = 1
+        else:
+            await message.answer(
+                "Включите топики и вызовите /set_suggest_topic из нужной ветки. "
+                "Сброс: /set_suggest_topic clear"
+            )
+            return
 
     club = await SettingsRepository(session).get_by_chat_id(message.chat.id)
     if club is None:

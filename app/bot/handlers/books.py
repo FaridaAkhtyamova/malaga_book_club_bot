@@ -4,7 +4,7 @@ import logging
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType, ParseMode
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramAPIError
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
@@ -670,6 +670,8 @@ async def _publish_to_group(
     user: User,
     data: dict[str, object],
 ) -> bool:
+
+
     club = await _club_from_data(session, data)
     dest = None if club is None else destination_of(club)
     if dest is None:
@@ -682,7 +684,9 @@ async def _publish_to_group(
             book.cover_url,
             dest.message_thread_id,
         )
-    except TelegramBadRequest:
+    except TelegramAPIError as exc:
+        # Выводим точную ошибку от Telegram в консоль!
+        logging.error(f"Ошибка публикации карточки: {exc}")
         return False
     return True
 
