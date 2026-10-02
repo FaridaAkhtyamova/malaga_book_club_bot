@@ -4,7 +4,7 @@ import html
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from app.db.models import (
     MeetingPoll,
     MeetingTimePoll,
     PendingGroupCard,
+    Suggestion,
     SuggestionCycle,
     User,
     VotePoll,
@@ -139,6 +140,11 @@ class ScheduledPendingReview:
 
 
 @dataclass(frozen=True, slots=True)
+class ScheduledSuggestionReminder:
+    cycle: SuggestionCycle
+
+
+@dataclass(frozen=True, slots=True)
 class PublishedVotePoll:
     chat_id: int
     message_id: int
@@ -214,6 +220,18 @@ class CycleService:
 
     async def count_suggestions(self, cycle_id: int) -> int:
         return await self.suggestion_repo.count(cycle_id)
+
+    async def list_suggestions(self) -> list[Suggestion]:
+        cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
+        if cycle is None:
+            raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
+        return await self.suggestion_repo.list_suggestions(cycle.id)
+
+    async def remove_suggestion(self, book_id: int) -> bool:
+        cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
+        if cycle is None:
+            raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
+        return await self.suggestion_repo.remove(cycle.id, book_id)
 
     async def count_pending_group_cards(self, cycle_id: int) -> int:
         return await self.pending_card_repo.count_pending(cycle_id)
@@ -519,7 +537,13 @@ class CycleService:
 
     async def run_scheduled(
         self, now: datetime
-    ) -> ScheduledAnnounce | ScheduledVote | ScheduledPendingReview | None:
+    ) -> (
+        ScheduledAnnounce
+        | ScheduledVote
+        | ScheduledPendingReview
+        | ScheduledSuggestionReminder
+        | None
+    ):
         if self.club.group_chat_id is None:
             return None
 
@@ -533,6 +557,12 @@ class CycleService:
             if existing is None:
                 _, text = await self.open_suggestions_for_next_month(current)
                 return ScheduledAnnounce(text=text)
+
+        tomorrow = current + timedelta(days=1)
+        if self.club.vote_day is not None and tomorrow.day == self.club.vote_day:
+            cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
+            if cycle is not None:
+                return ScheduledSuggestionReminder(cycle=cycle)
 
         if self.club.vote_day is not None and current.day == self.club.vote_day:
             cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)

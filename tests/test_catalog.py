@@ -1,6 +1,12 @@
+from unittest.mock import AsyncMock
+
+import pytest
+
 from app.schemas.book import BookSchema
-from app.services.catalog import rank_catalog_results
-from app.services.google_books import build_google_query
+from app.services import catalog
+from app.services.catalog import CatalogSearchUnavailable, rank_catalog_results
+from app.services.google_books import GoogleBooksError, build_google_query
+from app.services.open_library import OpenLibraryError
 
 
 def _book(
@@ -73,3 +79,26 @@ def test_drops_results_without_query_overlap() -> None:
     )
     ranked = rank_catalog_results("Мастер и Маргарита", [miss, hit])
     assert [book.google_id for book in ranked] == ["hit"]
+
+
+async def test_search_catalog_raises_when_all_providers_are_unavailable(monkeypatch) -> None:
+    google = AsyncMock()
+    google.search_books.side_effect = GoogleBooksError("unavailable")
+    open_library = AsyncMock()
+    open_library.search_books.side_effect = OpenLibraryError("unavailable")
+    monkeypatch.setattr(catalog, "_google", lambda: google)
+    monkeypatch.setattr(catalog, "_openlib", lambda: open_library)
+
+    with pytest.raises(CatalogSearchUnavailable):
+        await catalog.search_catalog("Дюна")
+
+
+async def test_search_catalog_keeps_empty_result_when_provider_responds(monkeypatch) -> None:
+    google = AsyncMock()
+    google.search_books.side_effect = GoogleBooksError("unavailable")
+    open_library = AsyncMock()
+    open_library.search_books.return_value = []
+    monkeypatch.setattr(catalog, "_google", lambda: google)
+    monkeypatch.setattr(catalog, "_openlib", lambda: open_library)
+
+    assert await catalog.search_catalog("Дюна") == []

@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import PendingGroupCard, User
 from app.repositories.cycle_repo import CycleRepository
 from app.repositories.pending_group_card_repo import PendingGroupCardRepository
+from app.repositories.suggestion_repo import SuggestionRepository
 from app.repositories.user_repo import UserRepository
 from app.services.cycle_service import CycleNotOpenError
 from app.services.hashtag_suggest import HashtagSuggestion
@@ -22,6 +23,7 @@ class PendingGroupCardService:
         self.session = session
         self.cycle_repo = CycleRepository(session)
         self.card_repo = PendingGroupCardRepository(session)
+        self.suggestion_repo = SuggestionRepository(session)
         self.user_repo = UserRepository(session)
 
     async def get(self, card_id: int) -> PendingGroupCard | None:
@@ -130,7 +132,7 @@ class PendingGroupCardService:
         if cycle is None:
             raise CycleNotOpenError("Предложения ещё не открыты.")
 
-        _, created = await ManualBookService(self.session).add(
+        book, created = await ManualBookService(self.session).add(
             user,
             cycle,
             title=claimed.title or "",
@@ -138,7 +140,12 @@ class PendingGroupCardService:
             description=claimed.description,
             page_count=claimed.page_count,
             cover_url=claimed.cover_url,
+            source_chat_id=claimed.chat_id,
+            source_message_id=claimed.message_id,
         )
+        if created:
+            claimed.approved_book_id = book.id
+        await self.card_repo.save(claimed)
         return claimed, created
 
     async def reject(self, card_id: int) -> PendingGroupCard:
@@ -146,6 +153,20 @@ class PendingGroupCardService:
         if claimed is None:
             raise PendingCardNotFoundError("Эта карточка уже разобрана или не найдена.")
         return claimed
+
+    async def remove_suggestion_from_edit(self, chat_id: int, message_id: int) -> bool:
+        card = await self.card_repo.get_by_source(chat_id, message_id)
+        if card is None:
+            return False
+        if card.status == PendingGroupCard.STATUS_PENDING:
+            await self.card_repo.claim(card.id, PendingGroupCard.STATUS_REJECTED)
+            return True
+        if card.status != PendingGroupCard.STATUS_APPROVED or card.approved_book_id is None:
+            return False
+        cycle = await self.cycle_repo.get(card.cycle_id)
+        if cycle is None or cycle.status != cycle.STATUS_SUGGESTING:
+            return False
+        return await self.suggestion_repo.remove(card.cycle_id, card.approved_book_id)
 
 
 def format_card_preview(card: PendingGroupCard) -> str:

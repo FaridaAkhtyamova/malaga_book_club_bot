@@ -22,6 +22,16 @@ class UserRepository:
         user = result.scalar_one_or_none()
 
         if user is not None:
+            updated = False
+            if username is not None and user.username != username:
+                user.username = username
+                updated = True
+            if full_name is not None and user.full_name != full_name:
+                user.full_name = full_name
+                updated = True
+            if updated:
+                await self.session.commit()
+                await self.session.refresh(user)
             return user
 
         user = User(

@@ -49,6 +49,10 @@ _google_books: GoogleBooksService | None = None
 _open_library: OpenLibraryService | None = None
 
 
+class CatalogSearchUnavailable(Exception):
+    """Raised when all catalog providers fail for a search request."""
+
+
 def _google() -> GoogleBooksService:
     global _google_books
     if _google_books is None:
@@ -152,15 +156,19 @@ def rank_catalog_results(query: str, books: list[BookSchema]) -> list[BookSchema
 
 
 async def search_catalog(query: str) -> list[BookSchema]:
+    google_unavailable = False
     try:
         books = await _google().search_books(query)
         if books:
             return rank_catalog_results(query, books)
         logger.info("Google Books returned no results, trying Open Library")
     except GoogleBooksError:
+        google_unavailable = True
         logger.warning("Google Books unavailable, trying Open Library")
 
     try:
         return rank_catalog_results(query, await _openlib().search_books(query))
-    except OpenLibraryError:
+    except OpenLibraryError as exc:
+        if google_unavailable:
+            raise CatalogSearchUnavailable("All book catalog providers are unavailable") from exc
         return []

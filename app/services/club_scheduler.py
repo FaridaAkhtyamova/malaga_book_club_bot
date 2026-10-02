@@ -19,6 +19,7 @@ from app.services.cycle_service import (
     CycleService,
     ScheduledAnnounce,
     ScheduledPendingReview,
+    ScheduledSuggestionReminder,
     ScheduledVote,
 )
 
@@ -31,9 +32,10 @@ def create_scheduler(bot: Bot) -> AsyncIOScheduler:
     scheduler.add_job(
         run_scheduled_jobs,
         "cron",
+        hour=10,
         minute=0,
         args=[bot],
-        id="club_cycle_hourly",
+        id="club_cycle_daily",
         replace_existing=True,
         coalesce=True,
         misfire_grace_time=3600,
@@ -62,6 +64,14 @@ async def run_scheduled_jobs(bot: Bot) -> None:
                 if isinstance(action, ScheduledAnnounce):
                     text = _announcement_from_scheduled(action.text)
                     await publish_club_announcement(bot, dest, text)
+                elif isinstance(action, ScheduledSuggestionReminder):
+                    month = MONTH_NAMES_RU[action.cycle.target_month]
+                    await publish_club_announcement(
+                        bot,
+                        dest,
+                        f"Завтра последний день, когда можно предложить книгу на {month}.\n"
+                        "Успейте добавить свою книгу сегодня!",
+                    )
                 elif isinstance(action, ScheduledPendingReview):
                     await send_pending_card_reviews(bot, action.cards, session)
                 elif isinstance(action, ScheduledVote):

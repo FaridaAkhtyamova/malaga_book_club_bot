@@ -4,7 +4,7 @@ import logging
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType, ParseMode
-from aiogram.exceptions import TelegramBadRequest, TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, ReplyKeyboardRemove
@@ -24,6 +24,7 @@ from app.bot.keyboards.book import (
     RETRY_BUTTON,
     confirm_send_keyboard,
     search_results_keyboard,
+    search_unavailable_keyboard,
     suggest_control_keyboard,
 )
 from app.bot.media import cover_file_id
@@ -33,7 +34,7 @@ from app.repositories.settings_repo import SettingsRepository
 from app.repositories.user_repo import UserRepository
 from app.schemas.book import BookSchema
 from app.services.book_card import format_book_card, format_group_card
-from app.services.catalog import search_catalog
+from app.services.catalog import CatalogSearchUnavailable, search_catalog
 from app.services.club_destination import destination_of
 from app.services.cycle_service import CycleNotOpenError, CycleService
 from app.services.hashtag_suggest import GROUP_HINT
@@ -47,7 +48,10 @@ router.callback_query.filter(F.message.chat.type == ChatType.PRIVATE)
 _SKIP = "-"
 _KEEP_QUERY = "."
 _SUGGEST_STATES = StateFilter(BookSearchStates)
-_CANCELLED = "Отменено. Чтобы предложить книгу, снова отправьте /suggest."
+_CANCELLED = (
+    "Отменено. Для нового поиска отправьте название книги сообщением "
+    "или используйте /suggest."
+)
 _ENTER_TITLE = "Введите название книги."
 _ENTER_COVER = "Прикрепите обложку картинкой. Если без обложки — отправьте `-`."
 
@@ -63,6 +67,19 @@ async def cmd_suggest(
     query = (command.args or "").strip() or None
     if query:
         await state.update_data(pending_suggest_query=query)
+    await begin_suggest(message, state, session, bot, query=query)
+
+
+@router.message(StateFilter(None), F.text, ~F.text.startswith("/"))
+async def process_idle_text_as_query(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    query = (message.text or "").strip()
+    if not query:
+        return
     await begin_suggest(message, state, session, bot, query=query)
 
 
@@ -95,6 +112,14 @@ async def on_search_nav(
     await callback.answer()
     if callback_data.action == "retry":
         await _restart_search(callback.message, state)
+        return
+    if callback_data.action == "retry_search":
+        data = await state.get_data()
+        query = data.get("query")
+        if isinstance(query, str) and query.strip():
+            await _search_and_show(callback.message, state, query.strip())
+        else:
+            await _restart_search(callback.message, state)
         return
     await _cancel_flow(callback.message, state)
 
@@ -241,12 +266,20 @@ async def process_manual_cover(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
+    logger.info(
+        "Manual cover update received: state=%s content_type=%s user_id=%s",
+        await state.get_state(),
+        message.content_type,
+        message.from_user.id if message.from_user else None,
+    )
     if await _ensure_can_suggest(message, session, bot, state) is None:
+        logger.warning("Manual cover update rejected by suggest access check")
         return
     if message.from_user is None:
         return
 
     cover_id = cover_file_id(message)
+    logger.info("Manual cover extracted: present=%s", cover_id is not None)
     if cover_id is None:
         raw = (message.text or "").strip()
         if raw != _SKIP:
@@ -529,7 +562,17 @@ async def _search_and_show(message: Message, state: FSMContext, query: str) -> N
     await state.set_state(BookSearchStates.waiting_query)
     await state.update_data(query=query, results=[], pending=None)
     logger.info("Book search query=%r by %s", query, _actor_label(message))
-    books = await search_catalog(query)
+    try:
+        books = await search_catalog(query)
+    except CatalogSearchUnavailable:
+        logger.info("Catalog search temporarily unavailable for query=%r", query)
+        await state.update_data(results=[])
+        await message.answer(
+            "Иногда поиск работает нестабильно. Подождите немного и попробуйте позже "
+            "или добавьте книгу вручную.",
+            reply_markup=search_unavailable_keyboard(),
+        )
+        return
     logger.info(
         "Book search query=%r by %s returned %s result(s)",
         query,
@@ -673,21 +716,58 @@ async def _publish_to_group(
 
 
     club = await _club_from_data(session, data)
-    dest = None if club is None else destination_of(club)
-    if dest is None:
+    if club is None:
         return False
+    dest = destination_of(club)
+    if dest is None:
+        logger.warning(
+            "Cannot publish book card: no group destination (book_id=%s, club_id=%s)",
+            book.id,
+            data.get("club_id"),
+        )
+        return False
+    thread_id = dest.message_thread_id
+    logger.info(
+        "Publishing book card (book_id=%s, chat_id=%s, configured_thread_id=%s, "
+        "thread_id=%s, has_cover=%s)",
+        book.id,
+        dest.chat_id,
+        dest.message_thread_id,
+        thread_id,
+        bool(book.cover_url),
+    )
     try:
-        await send_html_card(
+        sent = await send_html_card(
             bot,
             dest.chat_id,
             format_group_card(book, user),
             book.cover_url,
-            dest.message_thread_id,
+            thread_id,
         )
+        service = CycleService(session, club)
+        cycle = await service.get_active_suggesting_cycle()
+        if cycle is not None:
+            await service.suggestion_repo.set_source_message(
+                cycle.id,
+                book.id,
+                dest.chat_id,
+                sent.message_id,
+            )
     except TelegramAPIError as exc:
-        # Выводим точную ошибку от Telegram в консоль!
-        logging.error(f"Ошибка публикации карточки: {exc}")
+        logger.exception(
+            "Book card publication failed (book_id=%s, chat_id=%s, thread_id=%s): %s",
+            book.id,
+            dest.chat_id,
+            thread_id,
+            exc,
+        )
         return False
+    logger.info(
+        "Book card published (book_id=%s, chat_id=%s, thread_id=%s)",
+        book.id,
+        dest.chat_id,
+        thread_id,
+    )
     return True
 
 
@@ -700,7 +780,7 @@ async def _send_book_card(message: Message, cover_url: str | None, caption: str)
                 parse_mode=ParseMode.HTML,
             )
             return
-        except TelegramBadRequest:
+        except TelegramBadRequest as photo_error:
             try:
                 await message.answer_document(
                     document=cover_url,
@@ -708,8 +788,12 @@ async def _send_book_card(message: Message, cover_url: str | None, caption: str)
                     parse_mode=ParseMode.HTML,
                 )
                 return
-            except TelegramBadRequest:
-                pass
+            except TelegramBadRequest as document_error:
+                logger.warning(
+                    "Manual book cover rejected as photo and document: photo=%s document=%s",
+                    photo_error,
+                    document_error,
+                )
 
     await message.answer(caption, parse_mode=ParseMode.HTML)
 

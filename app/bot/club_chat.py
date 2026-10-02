@@ -1,16 +1,19 @@
-from contextlib import suppress
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from aiogram import Bot
 from aiogram.enums import ChatMemberStatus, ChatType, ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.types import ChatMemberRestricted
+from aiogram.types import ChatMemberRestricted, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import ClubSettings
 from app.repositories.settings_repo import SettingsRepository
 from app.services.book_card import PHOTO_CAPTION_LIMIT
 from app.services.cycle_service import CycleService
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,6 +179,30 @@ def _topic_matches(expected: int | None, actual: int | None) -> bool:
     return expected in {1, None} and actual in {1, None}
 
 
+async def send_with_topic_fallback[T](
+    send: Callable[[int | None], Awaitable[T]],
+    *,
+    chat_id: int,
+    message_thread_id: int | None,
+    operation: str,
+) -> tuple[T, int | None]:
+    try:
+        return await send(message_thread_id), message_thread_id
+    except TelegramBadRequest as exc:
+        if (
+            message_thread_id is None
+            or "message thread not found" not in str(exc).lower()
+        ):
+            raise
+        logger.warning(
+            "%s topic not found; retrying without a thread (chat_id=%s, thread_id=%s)",
+            operation,
+            chat_id,
+            message_thread_id,
+        )
+        return await send(None), None
+
+
 async def send_html_card(
     bot: Bot,
     chat_id: int,
@@ -184,46 +211,100 @@ async def send_html_card(
     message_thread_id: int | None = None,
     *,
     parse_mode: ParseMode | None = ParseMode.HTML,
-) -> None:
+) -> Message:
+    async def send_card_request[T](
+        send: Callable[[int | None], Awaitable[T]],
+        operation: str,
+    ) -> T:
+        nonlocal message_thread_id
+        result, message_thread_id = await send_with_topic_fallback(
+            send,
+            chat_id=chat_id,
+            message_thread_id=message_thread_id,
+            operation=operation,
+        )
+        return result
+
     if cover_url and len(caption) <= PHOTO_CAPTION_LIMIT:
-        with suppress(TelegramBadRequest):
-            await bot.send_photo(
-                chat_id,
-                photo=cover_url,
-                caption=caption,
-                parse_mode=parse_mode,
-                message_thread_id=message_thread_id,
+        try:
+            return await send_card_request(
+                lambda thread_id: bot.send_photo(
+                    chat_id,
+                    photo=cover_url,
+                    caption=caption,
+                    parse_mode=parse_mode,
+                    message_thread_id=thread_id,
+                ),
+                "Card photo",
             )
-            return
-        with suppress(TelegramBadRequest):
-            await bot.send_document(
+        except TelegramBadRequest as exc:
+            logger.warning(
+                "Could not send card photo with caption (chat_id=%s, thread_id=%s): %s",
                 chat_id,
-                document=cover_url,
-                caption=caption,
-                parse_mode=parse_mode,
-                message_thread_id=message_thread_id,
+                message_thread_id,
+                exc,
             )
-            return
-    elif cover_url:
-        sent_cover = False
-        with suppress(TelegramBadRequest):
-            await bot.send_photo(
-                chat_id,
-                photo=cover_url,
-                message_thread_id=message_thread_id,
-            )
-            sent_cover = True
-        if not sent_cover:
-            with suppress(TelegramBadRequest):
-                await bot.send_document(
+        try:
+            return await send_card_request(
+                lambda thread_id: bot.send_document(
                     chat_id,
                     document=cover_url,
-                    message_thread_id=message_thread_id,
+                    caption=caption,
+                    parse_mode=parse_mode,
+                    message_thread_id=thread_id,
+                ),
+                "Card document",
+            )
+        except TelegramBadRequest as exc:
+            logger.warning(
+                "Could not send card document with caption (chat_id=%s, thread_id=%s): %s",
+                chat_id,
+                message_thread_id,
+                exc,
+            )
+    elif cover_url:
+        sent_cover = False
+        try:
+            await send_card_request(
+                lambda thread_id: bot.send_photo(
+                    chat_id,
+                    photo=cover_url,
+                    message_thread_id=thread_id,
+                ),
+                "Card photo",
+            )
+            sent_cover = True
+        except TelegramBadRequest as exc:
+            logger.warning(
+                "Could not send card photo (chat_id=%s, thread_id=%s): %s",
+                chat_id,
+                message_thread_id,
+                exc,
+            )
+        if not sent_cover:
+            try:
+                await send_card_request(
+                    lambda thread_id: bot.send_document(
+                        chat_id,
+                        document=cover_url,
+                        message_thread_id=thread_id,
+                    ),
+                    "Card document",
+                )
+            except TelegramBadRequest as exc:
+                logger.warning(
+                    "Could not send card document (chat_id=%s, thread_id=%s): %s",
+                    chat_id,
+                    message_thread_id,
+                    exc,
                 )
 
-    await bot.send_message(
-        chat_id,
-        caption,
-        parse_mode=parse_mode,
-        message_thread_id=message_thread_id,
+    return await send_card_request(
+        lambda thread_id: bot.send_message(
+            chat_id,
+            caption,
+            parse_mode=parse_mode,
+            message_thread_id=thread_id,
+        ),
+        "Card message",
     )
