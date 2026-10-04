@@ -417,7 +417,7 @@ async def on_meeting_poll_book_choice(
     bot: Bot,
 ) -> None:
     origin = callback.message
-    if origin is None:
+    if not isinstance(origin, Message):
         await callback.answer()
         return
 
