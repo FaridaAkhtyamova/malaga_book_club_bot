@@ -1,4 +1,3 @@
-import logging
 from contextlib import suppress
 from datetime import date
 
@@ -21,6 +20,7 @@ from app.bot.club_publish import (
     publish_meeting_time_poll,
     publish_vote_polls,
     publish_winner_announcement,
+    record_vote_polls_or_stop,
     send_pending_card_reviews,
     stop_meeting_polls,
     stop_meeting_time_polls,
@@ -119,15 +119,6 @@ async def cmd_set_suggest_topic(
     session: AsyncSession,
     bot: Bot,
 ) -> None:
-# --- ДЕБАГ В ЛОГИ ДОКЕРА ---
-    logging.warning(
-        f"DEBUG cmd_set_suggest_topic | "
-        f"chat_type: {message.chat.type}, "
-        f"is_forum: {getattr(message.chat, 'is_forum', False)}, "
-        f"thread_id: {message.message_thread_id}"
-    )
-    # ---------------------------
-    # ------------------
     arg = (command.args or "").strip().casefold()
     if arg in _CLEAR_TOPIC:
         if message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}:
@@ -227,8 +218,7 @@ async def cmd_start_vote(
         await message.answer(f"Не удалось опубликовать опросы: {exc}")
         return
 
-    await service.record_vote_polls(cycle, published)
-    await service.mark_voting(cycle)
+    await record_vote_polls_or_stop(bot, service, cycle, published, mark_voting=True)
     await sync_suggestion_buttons(bot, session, club.id, enabled=False)
     same_thread = (
         message.chat.id == dest.chat_id and message.message_thread_id == dest.message_thread_id
@@ -326,7 +316,7 @@ async def cmd_close_vote(
     except TelegramAPIError as exc:
         await message.answer(f"Ничья, но второй тур не отправился: {exc}")
         return
-    await service.record_vote_polls(cycle, published)
+    await record_vote_polls_or_stop(bot, service, cycle, published)
     if not same_thread:
         await message.answer("Ничья. Второй тур опубликован в группе.")
 
@@ -371,8 +361,7 @@ async def cmd_reset_vote(
         await message.answer(f"Старые опросы закрыты, но новые не отправились: {exc}")
         return
 
-    await service.record_vote_polls(cycle, published)
-    await service.mark_voting(cycle)
+    await record_vote_polls_or_stop(bot, service, cycle, published, mark_voting=True)
     await sync_suggestion_buttons(bot, session, club.id, enabled=False)
     started = plan.period_start
     await message.answer(

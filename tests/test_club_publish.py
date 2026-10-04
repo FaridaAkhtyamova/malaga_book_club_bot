@@ -110,6 +110,45 @@ async def test_vote_poll_retries_without_missing_thread(monkeypatch) -> None:
     ]
 
 
+async def test_vote_poll_partial_failure_stops_published_polls(monkeypatch) -> None:
+    monkeypatch.setattr(club_publish, "format_poll_option", lambda book, used: book.title)
+    bot = AsyncMock()
+    bot.send_message.return_value = None
+    first_poll = SimpleNamespace(
+        message_id=101,
+        poll=SimpleNamespace(id="poll-1"),
+    )
+    error = TelegramBadRequest(method=MagicMock(), message="poll failure")
+    bot.send_poll.side_effect = [first_poll, error]
+    cycle = SimpleNamespace(target_month=10)
+    books = [
+        Book(id=1, title="Книга 1", google_id="book-1"),
+        Book(id=2, title="Книга 2", google_id="book-2"),
+    ]
+    dest = ClubDestination(chat_id=-100123, message_thread_id=None)
+
+    with pytest.raises(TelegramBadRequest, match="poll failure"):
+        await club_publish.publish_vote_polls(bot, dest, cycle, [[books[0]], [books[1]]])
+
+    bot.stop_poll.assert_awaited_once_with(chat_id=-100123, message_id=101)
+
+
+async def test_record_vote_polls_failure_rolls_back_and_stops_polls() -> None:
+    service = SimpleNamespace(
+        session=SimpleNamespace(rollback=AsyncMock()),
+        record_vote_polls=AsyncMock(side_effect=RuntimeError("database failure")),
+    )
+    bot = AsyncMock()
+    cycle = SimpleNamespace(id=1)
+    poll = SimpleNamespace(chat_id=-100123, message_id=101)
+
+    with pytest.raises(RuntimeError, match="database failure"):
+        await club_publish.record_vote_polls_or_stop(bot, service, cycle, [poll])
+
+    service.session.rollback.assert_awaited_once()
+    bot.stop_poll.assert_awaited_once_with(chat_id=-100123, message_id=101)
+
+
 async def test_meeting_time_poll_retries_without_missing_thread() -> None:
     bot = AsyncMock()
     bot.send_message.return_value = None

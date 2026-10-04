@@ -13,7 +13,7 @@ from aiogram.types import (
 )
 
 from app.bot.club_chat import club_admin_user_ids
-from app.services.hashtag_suggest import CARD_TEMPLATE
+
 
 @dataclass(frozen=True, slots=True)
 class CommandInfo:
@@ -192,6 +192,8 @@ def admin_command_names() -> tuple[str, ...]:
 def format_help(*, is_admin: bool) -> str:
     lines = [
         "Команды отправляйте боту в личные сообщения.",
+        "В группе бот не ведёт переписку.",
+        "Карточки с тегом #выбор_книги он сохранит для проверки админом.",
         "",
         "Команды для всех:",
         "",

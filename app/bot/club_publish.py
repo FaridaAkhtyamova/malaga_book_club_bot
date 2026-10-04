@@ -30,6 +30,7 @@ from app.db.models import (
 from app.repositories.suggestion_repo import SuggestionRepository
 from app.services.club_destination import ClubDestination
 from app.services.cycle_service import (
+    CycleService,
     PublishedMeetingPoll,
     PublishedMeetingTimePoll,
     PublishedVotePoll,
@@ -164,36 +165,50 @@ async def publish_vote_polls(
 
     total = len(chunks)
     published: list[PublishedVotePoll] = []
-    for index, chunk in enumerate(chunks, start=1):
-        used: set[str] = set()
-        options: list[InputPollOption | str] = [format_poll_option(book, used) for book in chunk]
-        if runoff:
-            question = runoff_question(cycle.target_month)
-        else:
-            question = poll_question(cycle.target_month, index, total)
-        message, thread_id = await send_with_topic_fallback(
-            lambda current_thread_id, question=question, options=options: bot.send_poll(
+    try:
+        for index, chunk in enumerate(chunks, start=1):
+            used: set[str] = set()
+            options: list[InputPollOption | str] = [
+                format_poll_option(book, used) for book in chunk
+            ]
+            if runoff:
+                question = runoff_question(cycle.target_month)
+            else:
+                question = poll_question(cycle.target_month, index, total)
+
+            async def send_vote_poll(
+                current_thread_id: int | None,
+                question: str = question,
+                options: list[InputPollOption | str] = options,
+            ) -> Message:
+                return await bot.send_poll(
+                    chat_id=dest.chat_id,
+                    question=question,
+                    options=options,
+                    is_anonymous=False,
+                    allows_multiple_answers=not runoff,
+                    allow_adding_options=False,
+                    message_thread_id=current_thread_id,
+                )
+
+            message, thread_id = await send_with_topic_fallback(
+                send_vote_poll,
                 chat_id=dest.chat_id,
-                question=question,
-                options=options,
-                is_anonymous=False,
-                allows_multiple_answers=not runoff,
-                allow_adding_options=False,
-                message_thread_id=current_thread_id,
-            ),
-            chat_id=dest.chat_id,
-            message_thread_id=thread_id,
-            operation=f"Vote poll {index}/{total}",
-        )
-        recorded = _published_from_message(message, dest.chat_id, chunk)
-        if recorded is not None:
-            published.append(recorded)
+                message_thread_id=thread_id,
+                operation=f"Vote poll {index}/{total}",
+            )
+            recorded = _published_from_message(message, dest.chat_id, chunk)
+            if recorded is not None:
+                published.append(recorded)
+    except Exception:
+        await stop_polls_quietly(bot, published)
+        raise
     return published
 
 
 async def stop_polls_quietly(
     bot: Bot,
-    polls: Sequence[VotePoll | MeetingPoll | MeetingTimePoll],
+    polls: Sequence[VotePoll | MeetingPoll | MeetingTimePoll | PublishedVotePoll],
 ) -> None:
     for poll in polls:
         try:
@@ -205,6 +220,22 @@ async def stop_polls_quietly(
                 poll.message_id,
                 exc,
             )
+
+
+async def record_vote_polls_or_stop(
+    bot: Bot,
+    service: CycleService,
+    cycle: SuggestionCycle,
+    polls: Sequence[PublishedVotePoll],
+    *,
+    mark_voting: bool = False,
+) -> None:
+    try:
+        await service.record_vote_polls(cycle, polls, mark_voting=mark_voting)
+    except Exception:
+        await service.session.rollback()
+        await stop_polls_quietly(bot, polls)
+        raise
 
 
 def _published_from_message(

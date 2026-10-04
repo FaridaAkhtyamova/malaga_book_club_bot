@@ -347,15 +347,24 @@ class CycleService:
         self,
         cycle: SuggestionCycle,
         polls: Sequence[PublishedVotePoll],
+        *,
+        mark_voting: bool = False,
     ) -> None:
-        for poll in polls:
-            await self.vote_poll_repo.add(
+        rows = [
+            VotePoll(
                 cycle_id=cycle.id,
                 chat_id=poll.chat_id,
                 message_id=poll.message_id,
                 telegram_poll_id=poll.telegram_poll_id,
                 option_book_ids=poll.book_ids,
+                is_open=True,
             )
+            for poll in polls
+        ]
+        await self.vote_poll_repo.stage_many(rows)
+        if mark_voting:
+            cycle.status = SuggestionCycle.STATUS_VOTING
+        await self.session.commit()
 
     async def get_latest_voting(self) -> SuggestionCycle | None:
         return await self.cycle_vote_repo.get_latest_voting(self.club.id)

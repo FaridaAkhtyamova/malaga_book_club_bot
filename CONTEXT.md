@@ -62,7 +62,7 @@ book_club_bot/
 - `/start_meeting_time_poll` publishes a 10:00–19:00 hourly poll (typically weekends); `/close_meeting_time_poll` with a single hour publishes date and time in the group and DMs admins to run `/create_meeting`
 - `/create_meeting` uses the poll-chosen meeting date and hour when they exist; otherwise the admin types the missing pieces (`25.09` / `25.09.2026`, then time). If there is no winner book, the admin types the title before the time. The group gets `event.ics`.
 - Polls: `is_anonymous=False`; max 10 options; remainder of 1 is split as 9+2; first round allows multiple answers
-- Scheduler (hourly): for each bound club, on `suggest_day` at/after `announce_hour` opens next month; on `vote_day` publishes book polls unless unread group cards are waiting for admin review. Closing polls is always manual
+- Scheduler (daily at 10:00 in the configured timezone): for each bound club, on `suggest_day` at/after `announce_hour` opens next month; on `vote_day` publishes book polls unless unread group cards are waiting for admin review. Closing polls is always manual
 - `DEBUG=true` lets `/open_suggestions` reset the current month for local testing
 
 ## 6. Telegram setup

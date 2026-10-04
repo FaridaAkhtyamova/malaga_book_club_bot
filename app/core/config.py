@@ -2,6 +2,7 @@ from functools import lru_cache
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
@@ -30,10 +31,14 @@ class Settings(BaseSettings):
         return value
 
     @property
-    def async_pg_url(self) -> str:
-        return (
-            f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}@{self.DB_HOST}:"
-            f"{self.DB_PORT}/{self.DB_NAME}"
+    def async_pg_url(self) -> URL:
+        return URL.create(
+            "postgresql+asyncpg",
+            username=self.DB_USER,
+            password=self.DB_PASS,
+            host=self.DB_HOST,
+            port=self.DB_PORT,
+            database=self.DB_NAME,
         )
 
     @property

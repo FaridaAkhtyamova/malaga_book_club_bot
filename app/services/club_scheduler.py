@@ -8,6 +8,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from app.bot.club_publish import (
     publish_club_announcement,
     publish_vote_polls,
+    record_vote_polls_or_stop,
     send_pending_card_reviews,
 )
 from app.core.config import get_settings
@@ -48,7 +49,13 @@ async def run_scheduled_jobs(bot: Bot) -> None:
     now = datetime.now(ZoneInfo(settings.TIMEZONE))
     async with AsyncSessionLocal() as session:
         clubs = await SettingsRepository(session).list_bound()
-        for club in clubs:
+        group_chat_ids = [club.group_chat_id for club in clubs if club.group_chat_id is not None]
+
+    for chat_id in group_chat_ids:
+        async with AsyncSessionLocal() as session:
+            club = await SettingsRepository(session).get_by_chat_id(chat_id)
+            if club is None:
+                continue
             dest = destination_of(club)
             if dest is None:
                 continue
@@ -57,6 +64,7 @@ async def run_scheduled_jobs(bot: Bot) -> None:
                 action = await service.run_scheduled(now)
             except Exception:
                 logger.exception("Failed scheduled cycle for club %s", club.id)
+                await session.rollback()
                 continue
             if action is None:
                 continue
@@ -76,10 +84,12 @@ async def run_scheduled_jobs(bot: Bot) -> None:
                     await send_pending_card_reviews(bot, action.cards, session)
                 elif isinstance(action, ScheduledVote):
                     published = await publish_vote_polls(bot, dest, action.cycle, action.chunks)
-                    await service.record_vote_polls(action.cycle, published)
-                    await service.mark_voting(action.cycle)
+                    await record_vote_polls_or_stop(
+                        bot, service, action.cycle, published, mark_voting=True
+                    )
             except Exception:
                 logger.exception("Failed to publish scheduled club message for club %s", club.id)
+                await session.rollback()
 
 
 def _announcement_from_scheduled(text: str) -> str:

@@ -1,6 +1,6 @@
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -8,8 +8,14 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import CopyMessage
 
 from app.bot.club_publish import filter_books_with_available_messages
-from app.db.models import Book
-from app.services.cycle_service import chunk_books_for_polls, collection_month_start, naive_utc
+from app.db.models import Book, SuggestionCycle
+from app.services.cycle_service import (
+    CycleService,
+    PublishedVotePoll,
+    chunk_books_for_polls,
+    collection_month_start,
+    naive_utc,
+)
 from app.services.meeting_poll import (
     HourVoteCounts,
     format_meeting_hour,
@@ -69,6 +75,32 @@ async def test_vote_chunks_skip_books_with_missing_source_messages() -> None:
         {"chat_id": -100, "message_id": 101},
         {"chat_id": -100, "message_id": 103},
     ]
+
+
+@pytest.mark.asyncio
+async def test_record_vote_polls_commits_rows_and_voting_status_together() -> None:
+    session = SimpleNamespace(add_all=MagicMock(), commit=AsyncMock())
+    cycle = SimpleNamespace(id=7, status=SuggestionCycle.STATUS_SUGGESTING)
+    service = CycleService(session, SimpleNamespace(id=1))  # type: ignore[arg-type]
+    published = [
+        PublishedVotePoll(
+            chat_id=-100123,
+            message_id=101,
+            telegram_poll_id="poll-1",
+            book_ids=[1, 2],
+        )
+    ]
+
+    await service.record_vote_polls(cycle, published, mark_voting=True)
+
+    session.add_all.assert_called_once()
+    rows = session.add_all.call_args.args[0]
+    assert len(rows) == 1
+    assert rows[0].cycle_id == cycle.id
+    assert rows[0].message_id == 101
+    assert rows[0].option_book_ids == [1, 2]
+    session.commit.assert_awaited_once()
+    assert cycle.status == SuggestionCycle.STATUS_VOTING
 
 
 def test_vote_counts_detect_tie() -> None:
