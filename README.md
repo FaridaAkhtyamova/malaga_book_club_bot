@@ -204,3 +204,19 @@ docker compose logs -f bot
 Поднимаются Postgres и бот. После ребута сервера контейнеры встанут сами (`restart: unless-stopped`).
 
 Локальный `python main.py` остановите: два процесса с одним токеном конфликтуют в Telegram.
+
+---
+
+## CI и обязательные проверки перед merge
+
+Workflow `CI` запускает тесты (`pytest`) для каждого push и pull request. Результат публикуется как check `CI / Tests`; если тесты падают, check не проходит.
+
+Чтобы GitHub блокировал merge до успешного прохождения проверок:
+
+1. Отправьте workflow в GitHub и дождитесь первого запуска: push в любую ветку или pull request.
+2. Откройте **Settings → Rules → Rulesets** и создайте **New branch ruleset** для основной ветки (обычно `main`).
+3. Включите **Require a pull request before merging** и **Require status checks to pass**.
+4. В списке проверок найдите и добавьте **CI / Tests**, затем сохраните ruleset.
+5. Если проверка должна быть обязательной и для администраторов, не разрешайте обход ruleset (bypass).
+
+После этого pull request нельзя будет влить, пока check `CI / Tests` не завершится успешно.
