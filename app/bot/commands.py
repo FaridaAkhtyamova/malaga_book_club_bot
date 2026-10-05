@@ -13,13 +13,6 @@ from aiogram.types import (
 )
 
 from app.bot.club_chat import club_admin_user_ids
-from app.services.hashtag_suggest import CARD_TEMPLATE
-
-_HASHTAG_HINT = (
-    "В группе, пока сбор открыт, запостите карточку: после тега название, затем автор. "
-    "Страницы — в любой строке со словами «стр» / «страниц». Кто предложил — из сообщения.\n"
-    f"{CARD_TEMPLATE}"
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,8 +35,7 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "suggest",
         "Найти книгу в каталоге (личка)",
-        "/suggest — поиск книги в каталоге (личка с ботом)\n"
-        "/suggest Название — то же, сразу с названием",
+        "/suggest — начать поиск книги в каталоге (личка с ботом)\n"
     ),
     CommandInfo(
         "clubs",
@@ -151,6 +143,18 @@ COMMANDS: tuple[CommandInfo, ...] = (
         admin=True,
     ),
     CommandInfo(
+        "suggestions",
+        "Список предложенных книг",
+        "/suggestions — показать книги активного сбора с ID",
+        admin=True,
+    ),
+    CommandInfo(
+        "remove_suggestion",
+        "Удалить книгу из предложений",
+        "/remove_suggestion — затем отправьте ID книги отдельным сообщением",
+        admin=True,
+    ),
+    CommandInfo(
         "month_book",
         "Книга месяца",
         "/month_book — выбранная книга месяца (победитель голосования)",
@@ -187,8 +191,9 @@ def admin_command_names() -> tuple[str, ...]:
 
 def format_help(*, is_admin: bool) -> str:
     lines = [
-        "Команды пишите в личке с ботом.",
-        "В группе бот только публикует анонсы, опросы, карточки и приглашения.",
+        "Команды отправляйте боту в личные сообщения.",
+        "В группе бот не ведёт переписку.",
+        "Карточки с тегом #выбор_книги он сохранит для проверки админом.",
         "",
         "Команды для всех:",
         "",
@@ -196,7 +201,6 @@ def format_help(*, is_admin: bool) -> str:
     lines.extend(
         item.help_line for item in COMMANDS if not item.admin and not item.hidden
     )
-    lines.extend(["", _HASHTAG_HINT])
     if not is_admin:
         return "\n".join(lines)
 
@@ -205,8 +209,9 @@ def format_help(*, is_admin: bool) -> str:
     lines.extend(item.help_line for item in COMMANDS if item.hidden)
     lines.append("")
     lines.append(
-        "Админские команды — тоже в личке. "
-        "Исключения: /set_group и /set_suggest_topic — только из группы."
+        "Остальные команды отправляйте боту в личные сообщения. "
+        "/set_group вызовите в группе, а /set_suggest_topic — в нужной ветке. "
+        "Чтобы сбросить топик, отправьте /set_suggest_topic clear в личке."
     )
     return "\n".join(lines)
 

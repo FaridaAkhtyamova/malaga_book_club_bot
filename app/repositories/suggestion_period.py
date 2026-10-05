@@ -31,7 +31,8 @@ class SuggestionPeriodRepository:
             delete(Suggestion).where(
                 Suggestion.cycle_id == cycle_id,
                 Suggestion.created_at < before,
-            )
+            ).returning(Suggestion.id)
         )
+        deleted_ids = result.scalars().all()
         await self.session.commit()
-        return int(result.rowcount or 0)
+        return len(deleted_ids)

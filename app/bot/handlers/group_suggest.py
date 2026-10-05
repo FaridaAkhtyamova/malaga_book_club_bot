@@ -29,7 +29,7 @@ class ClubHashtagFilter(BaseFilter):
 
 
 @router.message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), ClubHashtagFilter())
-@router.edited_message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}), ClubHashtagFilter())
+@router.edited_message(F.chat.type.in_({ChatType.GROUP, ChatType.SUPERGROUP}))
 async def on_hashtag_suggestion(
     message: Message,
     session: AsyncSession,
@@ -41,6 +41,13 @@ async def on_hashtag_suggestion(
             "Skip group hashtag: no user or foreign bot chat_id=%s message_id=%s",
             message.chat.id,
             message.message_id,
+        )
+        return
+
+    raw_text = suggest_source_text(message.text, message.caption)
+    if raw_text is None:
+        await PendingGroupCardService(session).remove_suggestion_from_edit(
+            message.chat.id, message.message_id
         )
         return
 
@@ -62,7 +69,6 @@ async def on_hashtag_suggestion(
         )
         return
 
-    raw_text = suggest_source_text(message.text, message.caption) or ""
     parsed = parse_hashtag_suggestion(raw_text)
     user_repo = UserRepository(session)
     user = await user_repo.get_or_create_user(

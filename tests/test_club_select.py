@@ -65,6 +65,9 @@ def test_clubs_list_many_asks_to_pick_group() -> None:
 
 def test_member_help_omits_clubs() -> None:
     text = format_help(is_admin=False)
+    assert "Команды отправляйте боту в личные сообщения." in text
+    assert "В группе бот не ведёт переписку" in text
+    assert "Карточки с тегом #выбор_книги" in text
     assert "/clubs" not in text
     assert "/suggest" in text
     assert "/open_suggestions" not in text
@@ -76,3 +79,6 @@ def test_admin_help_includes_member_admin_and_clubs() -> None:
     assert "/suggest" in text
     assert "/open_suggestions" in text
     assert "/clubs" in text
+    assert "/set_group вызовите в группе" in text
+    assert "/set_suggest_topic — в нужной ветке" in text
+    assert "/set_suggest_topic clear в личке" in text

@@ -25,7 +25,7 @@ CARD_TEMPLATE = (
     f"📖 {HASHTAG}\n"
     "Название книги\n"
     "Автор\n"
-    "500 стр.\n"
+    "{/n} стр.\n"
     "\n"
     "Краткое описание книги"
 )
@@ -57,7 +57,7 @@ def has_suggest_hashtag(text: str | None) -> bool:
 
 def suggest_source_text(*parts: str | None) -> str | None:
     for part in parts:
-        if has_suggest_hashtag(part):
+        if part is not None and has_suggest_hashtag(part):
             return _plain_hashtag_text(part)
     return None
 

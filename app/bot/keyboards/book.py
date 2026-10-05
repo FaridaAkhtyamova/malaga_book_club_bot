@@ -42,6 +42,17 @@ def search_results_keyboard(books: list[BookSchema]) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+def search_unavailable_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Поискать ещё раз", callback_data=BookNavCallback(action="retry_search"))
+    builder.button(
+        text="Добавить книгу вручную",
+        callback_data=BookMissingCallback(),
+    )
+    builder.adjust(1)
+    return builder.as_markup()
+
+
 def confirm_send_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.button(text="Отправить в группу", callback_data=BookConfirmCallback(action="ok"))

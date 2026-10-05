@@ -239,11 +239,13 @@ class PendingGroupCard(Base):
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cover_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    approved_book_id: Mapped[int | None] = mapped_column(ForeignKey("books.id"), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=STATUS_PENDING, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     cycle: Mapped[SuggestionCycle] = relationship(back_populates="pending_group_cards")
     user: Mapped[User] = relationship()
+    approved_book: Mapped[Book | None] = relationship()
 
 
 class Suggestion(Base):
@@ -254,6 +256,8 @@ class Suggestion(Base):
     cycle_id: Mapped[int] = mapped_column(ForeignKey("suggestion_cycles.id"), nullable=False)
     book_id: Mapped[int] = mapped_column(ForeignKey("books.id"), nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    source_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     cycle: Mapped[SuggestionCycle] = relationship(back_populates="suggestions")

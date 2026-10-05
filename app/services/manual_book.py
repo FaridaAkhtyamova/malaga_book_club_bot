@@ -21,6 +21,8 @@ class ManualBookService:
         description: str | None,
         page_count: int | None,
         cover_url: str | None = None,
+        source_chat_id: int | None = None,
+        source_message_id: int | None = None,
     ) -> tuple[Book, bool]:
         needle = title.casefold()
         for existing in await self.suggestion_repo.list_books(cycle.id):
@@ -38,7 +40,13 @@ class ManualBookService:
             page_count=page_count,
             cover_url=cover_url,
         )
-        created = await self.suggestion_repo.add(cycle.id, book.id, user.id)
+        created = await self.suggestion_repo.add(
+            cycle.id,
+            book.id,
+            user.id,
+            source_chat_id=source_chat_id,
+            source_message_id=source_message_id,
+        )
         if created is None:
             return book, False
         return book, True

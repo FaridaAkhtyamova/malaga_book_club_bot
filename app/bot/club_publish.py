@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
-from aiogram.types import BufferedInputFile, InputPollOption, Message, PollOption
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import (
+    BufferedInputFile,
+    InputPollOption,
+    Message,
+    PollOption,
+    ReplyKeyboardRemove,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.bot.club_chat import club_admin_user_ids, send_html_card
+from app.bot.club_chat import club_admin_user_ids, send_html_card, send_with_topic_fallback
 from app.bot.keyboards.pending_card import pending_card_keyboard
 from app.bot.keyboards.suggest import suggest_dm_keyboard
 from app.bot.media import cover_file_id
@@ -21,11 +27,14 @@ from app.db.models import (
     SuggestionCycle,
     VotePoll,
 )
+from app.repositories.suggestion_repo import SuggestionRepository
 from app.services.club_destination import ClubDestination
 from app.services.cycle_service import (
+    CycleService,
     PublishedMeetingPoll,
     PublishedMeetingTimePoll,
     PublishedVotePoll,
+    chunk_books_for_polls,
     format_poll_option,
     poll_question,
 )
@@ -58,17 +67,79 @@ _POLL_INTRO = (
 
 async def publish_club_announcement(bot: Bot, dest: ClubDestination, text: str) -> None:
     markup = await suggest_dm_keyboard(bot)
-    try:
-        await bot.send_message(
+    await send_with_topic_fallback(
+        lambda thread_id: bot.send_message(
             dest.chat_id,
             text,
             reply_markup=markup,
-            message_thread_id=dest.message_thread_id,
-        )
-    except TelegramBadRequest:
-        if dest.message_thread_id is None:
-            raise
-        await bot.send_message(dest.chat_id, text, reply_markup=markup)
+            message_thread_id=thread_id,
+        ),
+        chat_id=dest.chat_id,
+        message_thread_id=dest.message_thread_id,
+        operation="Club announcement",
+    )
+
+
+async def filter_books_with_available_messages(
+    bot: Bot,
+    books: Sequence[Book],
+    source_messages: Mapping[int, tuple[int, int]],
+) -> list[list[Book]]:
+    available: list[Book] = []
+    for book in books:
+        source = source_messages.get(book.id)
+        if source is None:
+            logger.info("Skipping book %s: source Telegram message is unknown", book.id)
+            continue
+        chat_id, message_id = source
+        try:
+            copied = await bot.copy_message(
+                chat_id=chat_id,
+                from_chat_id=chat_id,
+                message_id=message_id,
+            )
+        except TelegramAPIError as exc:
+            logger.info(
+                "Skipping book %s: source Telegram message %s/%s is unavailable: %s",
+                book.id,
+                chat_id,
+                message_id,
+                exc,
+            )
+            continue
+
+        available.append(book)
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=copied.message_id)
+        except TelegramAPIError as exc:
+            logger.warning(
+                "Could not delete temporary copy of book %s message %s/%s: %s",
+                book.id,
+                chat_id,
+                copied.message_id,
+                exc,
+            )
+    return chunk_books_for_polls(available)
+
+
+async def sync_suggestion_buttons(
+    bot: Bot,
+    session: AsyncSession,
+    club_id: int,
+    *,
+    enabled: bool,
+) -> None:
+    user_ids = await SuggestionRepository(session).list_user_ids_for_club(club_id)
+    text = (
+        "Сбор предложений открыт. Отправьте название книги сюда, чтобы найти её в каталоге."
+        if enabled
+        else "Голосование началось. Сейчас новые книги не принимаются."
+    )
+    for user_id in user_ids:
+        try:
+            await bot.send_message(user_id, text, reply_markup=ReplyKeyboardRemove())
+        except TelegramAPIError as exc:
+            logger.info("Could not sync suggestion button for user %s: %s", user_id, exc)
 
 
 async def publish_vote_polls(
@@ -80,38 +151,64 @@ async def publish_vote_polls(
     runoff: bool = False,
 ) -> list[PublishedVotePoll]:
     intro = runoff_intro_text() if runoff else _POLL_INTRO
-    await bot.send_message(
-        dest.chat_id,
-        intro,
-        message_thread_id=dest.message_thread_id,
+    thread_id = dest.message_thread_id
+    _, thread_id = await send_with_topic_fallback(
+        lambda current_thread_id: bot.send_message(
+            dest.chat_id,
+            intro,
+            message_thread_id=current_thread_id,
+        ),
+        chat_id=dest.chat_id,
+        message_thread_id=thread_id,
+        operation="Vote poll intro",
     )
+
     total = len(chunks)
     published: list[PublishedVotePoll] = []
-    for index, chunk in enumerate(chunks, start=1):
-        used: set[str] = set()
-        options: list[InputPollOption | str] = [format_poll_option(book, used) for book in chunk]
-        if runoff:
-            question = runoff_question(cycle.target_month)
-        else:
-            question = poll_question(cycle.target_month, index, total)
-        message = await bot.send_poll(
-            chat_id=dest.chat_id,
-            question=question,
-            options=options,
-            is_anonymous=False,
-            allows_multiple_answers=not runoff,
-            allow_adding_options=False,
-            message_thread_id=dest.message_thread_id,
-        )
-        recorded = _published_from_message(message, dest.chat_id, chunk)
-        if recorded is not None:
-            published.append(recorded)
+    try:
+        for index, chunk in enumerate(chunks, start=1):
+            used: set[str] = set()
+            options: list[InputPollOption | str] = [
+                format_poll_option(book, used) for book in chunk
+            ]
+            if runoff:
+                question = runoff_question(cycle.target_month)
+            else:
+                question = poll_question(cycle.target_month, index, total)
+
+            async def send_vote_poll(
+                current_thread_id: int | None,
+                question: str = question,
+                options: list[InputPollOption | str] = options,
+            ) -> Message:
+                return await bot.send_poll(
+                    chat_id=dest.chat_id,
+                    question=question,
+                    options=options,
+                    is_anonymous=False,
+                    allows_multiple_answers=not runoff,
+                    allow_adding_options=False,
+                    message_thread_id=current_thread_id,
+                )
+
+            message, thread_id = await send_with_topic_fallback(
+                send_vote_poll,
+                chat_id=dest.chat_id,
+                message_thread_id=thread_id,
+                operation=f"Vote poll {index}/{total}",
+            )
+            recorded = _published_from_message(message, dest.chat_id, chunk)
+            if recorded is not None:
+                published.append(recorded)
+    except Exception:
+        await stop_polls_quietly(bot, published)
+        raise
     return published
 
 
 async def stop_polls_quietly(
     bot: Bot,
-    polls: Sequence[VotePoll | MeetingPoll | MeetingTimePoll],
+    polls: Sequence[VotePoll | MeetingPoll | MeetingTimePoll | PublishedVotePoll],
 ) -> None:
     for poll in polls:
         try:
@@ -123,6 +220,22 @@ async def stop_polls_quietly(
                 poll.message_id,
                 exc,
             )
+
+
+async def record_vote_polls_or_stop(
+    bot: Bot,
+    service: CycleService,
+    cycle: SuggestionCycle,
+    polls: Sequence[PublishedVotePoll],
+    *,
+    mark_voting: bool = False,
+) -> None:
+    try:
+        await service.record_vote_polls(cycle, polls, mark_voting=mark_voting)
+    except Exception:
+        await service.session.rollback()
+        await stop_polls_quietly(bot, polls)
+        raise
 
 
 def _published_from_message(
@@ -228,7 +341,12 @@ async def _send_pending_card(
                 message_id=card.message_id,
             )
         except TelegramAPIError as copy_exc:
-            logger.warning("Could not copy group card %s to admin %s: %s", card.id, admin_id, copy_exc)
+            logger.warning(
+                "Could not copy group card %s to admin %s: %s",
+                card.id,
+                admin_id,
+                copy_exc,
+            )
     try:
         await bot.send_message(
             admin_id,
@@ -241,12 +359,17 @@ async def _send_pending_card(
 
 async def publish_meeting_invite(bot: Bot, dest: ClubDestination, invite: MeetingInvite) -> None:
     document = BufferedInputFile(invite.ics_bytes, filename=invite.filename)
-    await bot.send_document(
+    await send_with_topic_fallback(
+        lambda thread_id: bot.send_document(
+            chat_id=dest.chat_id,
+            document=document,
+            caption=invite.caption,
+            message_thread_id=thread_id,
+            disable_content_type_detection=True,
+        ),
         chat_id=dest.chat_id,
-        document=document,
-        caption=invite.caption,
         message_thread_id=dest.message_thread_id,
-        disable_content_type_detection=True,
+        operation="Meeting invite",
     )
 
 
@@ -259,23 +382,34 @@ async def publish_meeting_poll(
     runoff: bool = False,
     send_intro: bool = True,
 ) -> PublishedMeetingPoll | None:
+    thread_id = dest.message_thread_id
     if send_intro:
         intro = meeting_date_runoff_intro() if runoff else meeting_poll_intro(title)
-        await bot.send_message(
-            dest.chat_id,
-            intro,
-            message_thread_id=dest.message_thread_id,
+        _, thread_id = await send_with_topic_fallback(
+            lambda current_thread_id: bot.send_message(
+                dest.chat_id,
+                intro,
+                message_thread_id=current_thread_id,
+            ),
+            chat_id=dest.chat_id,
+            message_thread_id=thread_id,
+            operation="Meeting poll intro",
         )
     labels = option_labels(choices)
     poll_options: list[InputPollOption | str] = list(labels)
-    message = await bot.send_poll(
+    message, _ = await send_with_topic_fallback(
+        lambda current_thread_id: bot.send_poll(
+            chat_id=dest.chat_id,
+            question=meeting_date_runoff_question() if runoff else meeting_poll_question(title),
+            options=poll_options,
+            is_anonymous=False,
+            allows_multiple_answers=not runoff,
+            allow_adding_options=not runoff,
+            message_thread_id=current_thread_id,
+        ),
         chat_id=dest.chat_id,
-        question=meeting_date_runoff_question() if runoff else meeting_poll_question(title),
-        options=poll_options,
-        is_anonymous=False,
-        allows_multiple_answers=not runoff,
-        allow_adding_options=not runoff,
-        message_thread_id=dest.message_thread_id,
+        message_thread_id=thread_id,
+        operation="Meeting date poll",
     )
     poll = message.poll
     if poll is None:
@@ -309,23 +443,38 @@ async def publish_meeting_time_poll(
     runoff: bool = False,
     send_intro: bool = True,
 ) -> PublishedMeetingTimePoll | None:
+    thread_id = dest.message_thread_id
     if send_intro:
         intro = meeting_time_runoff_intro() if runoff else meeting_time_poll_intro(title, day)
-        await bot.send_message(
-            dest.chat_id,
-            intro,
-            message_thread_id=dest.message_thread_id,
+        _, thread_id = await send_with_topic_fallback(
+            lambda current_thread_id: bot.send_message(
+                dest.chat_id,
+                intro,
+                message_thread_id=current_thread_id,
+            ),
+            chat_id=dest.chat_id,
+            message_thread_id=thread_id,
+            operation="Meeting time poll intro",
         )
     labels = option_labels(choices)
     poll_options: list[InputPollOption | str] = list(labels)
-    message = await bot.send_poll(
+    message, _ = await send_with_topic_fallback(
+        lambda current_thread_id: bot.send_poll(
+            chat_id=dest.chat_id,
+            question=(
+                meeting_time_runoff_question()
+                if runoff
+                else meeting_time_poll_question(title)
+            ),
+            options=poll_options,
+            is_anonymous=False,
+            allows_multiple_answers=not runoff,
+            allow_adding_options=False,
+            message_thread_id=current_thread_id,
+        ),
         chat_id=dest.chat_id,
-        question=meeting_time_runoff_question() if runoff else meeting_time_poll_question(title),
-        options=poll_options,
-        is_anonymous=False,
-        allows_multiple_answers=not runoff,
-        allow_adding_options=False,
-        message_thread_id=dest.message_thread_id,
+        message_thread_id=thread_id,
+        operation="Meeting time poll",
     )
     poll = message.poll
     if poll is None:

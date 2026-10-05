@@ -1,3 +1,4 @@
+from contextlib import suppress
 from datetime import date
 
 from aiogram import Bot, F, Router
@@ -9,24 +10,28 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.admin_filter import AdminFilter
-from app.bot.club_chat import send_html_card
-from app.bot.club_context import club_from_state, remember_club, require_admin_club
 from app.bot.callbacks.meeting import MeetingPollBookCallback
+from app.bot.club_chat import clubs_where_admin, send_html_card
+from app.bot.club_context import club_from_state, remember_club, require_admin_club
 from app.bot.club_publish import (
+    filter_books_with_available_messages,
     notify_admins,
     publish_meeting_poll,
     publish_meeting_time_poll,
     publish_vote_polls,
     publish_winner_announcement,
+    record_vote_polls_or_stop,
     send_pending_card_reviews,
     stop_meeting_polls,
     stop_meeting_time_polls,
     stop_polls_quietly,
     stop_vote_polls,
+    sync_suggestion_buttons,
 )
 from app.bot.commands import setup_bot_commands
 from app.bot.keyboards.meeting import meeting_poll_book_keyboard
 from app.bot.states.meeting import MeetingPollStates
+from app.bot.states.suggestion import RemoveSuggestionStates
 from app.db.models import SuggestionCycle
 from app.repositories.settings_repo import SettingsRepository
 from app.services.club_destination import (
@@ -56,9 +61,9 @@ from app.services.cycle_service import (
 from app.services.meeting_poll import (
     chunk_dates_for_polls,
     chunk_hours_for_polls,
+    format_manual_meeting_title,
     format_meeting_day,
     format_meeting_hour,
-    format_manual_meeting_title,
     meeting_date_admin_prompt,
     meeting_date_announcement,
     meeting_poll_options,
@@ -139,11 +144,14 @@ async def cmd_set_suggest_topic(
 
     thread_id = message.message_thread_id
     if thread_id is None:
-        await message.answer(
-            "Включите топики и вызовите /set_suggest_topic из нужной ветки. "
-            "Сброс: /set_suggest_topic clear"
-        )
-        return
+        if getattr(message.chat, 'is_forum', False):
+            thread_id = 1
+        else:
+            await message.answer(
+                "Включите топики и вызовите /set_suggest_topic из нужной ветки. "
+                "Сброс: /set_suggest_topic clear"
+            )
+            return
 
     club = await SettingsRepository(session).get_by_chat_id(message.chat.id)
     if club is None:
@@ -192,14 +200,26 @@ async def cmd_start_vote(
         await message.answer(str(exc))
         return
 
+    suggestions = await service.suggestion_repo.list_suggestions(cycle.id)
+    source_messages = {
+        suggestion.book_id: (suggestion.source_chat_id, suggestion.source_message_id)
+        for suggestion in suggestions
+        if suggestion.source_chat_id is not None and suggestion.source_message_id is not None
+    }
+    books = [book for chunk in chunks for book in chunk]
+    chunks = await filter_books_with_available_messages(bot, books, source_messages)
+    if not chunks:
+        await message.answer("После проверки найдено меньше двух книг с доступными карточками.")
+        return
+
     try:
         published = await publish_vote_polls(bot, dest, cycle, chunks)
     except TelegramAPIError as exc:
         await message.answer(f"Не удалось опубликовать опросы: {exc}")
         return
 
-    await service.record_vote_polls(cycle, published)
-    await service.mark_voting(cycle)
+    await record_vote_polls_or_stop(bot, service, cycle, published, mark_voting=True)
+    await sync_suggestion_buttons(bot, session, club.id, enabled=False)
     same_thread = (
         message.chat.id == dest.chat_id and message.message_thread_id == dest.message_thread_id
     )
@@ -248,6 +268,7 @@ async def cmd_close_vote(
     )
     if tallies.total == 0:
         await service.reopen_suggestions_after_empty_vote(cycle)
+        await sync_suggestion_buttons(bot, session, club.id, enabled=True)
         await message.answer(
             "Никто не проголосовал. Сбор книг снова открыт — можно запустить /start_vote."
         )
@@ -295,7 +316,7 @@ async def cmd_close_vote(
     except TelegramAPIError as exc:
         await message.answer(f"Ничья, но второй тур не отправился: {exc}")
         return
-    await service.record_vote_polls(cycle, published)
+    await record_vote_polls_or_stop(bot, service, cycle, published)
     if not same_thread:
         await message.answer("Ничья. Второй тур опубликован в группе.")
 
@@ -340,8 +361,8 @@ async def cmd_reset_vote(
         await message.answer(f"Старые опросы закрыты, но новые не отправились: {exc}")
         return
 
-    await service.record_vote_polls(cycle, published)
-    await service.mark_voting(cycle)
+    await record_vote_polls_or_stop(bot, service, cycle, published, mark_voting=True)
+    await sync_suggestion_buttons(bot, session, club.id, enabled=False)
     started = plan.period_start
     await message.answer(
         f"Голосование сброшено. Новые опросы с {plan.book_count} книгами "
@@ -396,7 +417,7 @@ async def on_meeting_poll_book_choice(
     bot: Bot,
 ) -> None:
     origin = callback.message
-    if origin is None:
+    if not isinstance(origin, Message):
         await callback.answer()
         return
 
@@ -754,6 +775,95 @@ async def cmd_cycle_status(message: Message, session: AsyncSession, bot: Bot) ->
             lines.append(f"Время встречи: {format_meeting_hour(cycle.winner_meeting_hour)}")
 
     await message.answer("\n".join(lines))
+
+
+@dm_router.message(Command("suggestions"))
+async def cmd_suggestions(message: Message, session: AsyncSession, bot: Bot) -> None:
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    try:
+        suggestions = await CycleService(session, club).list_suggestions()
+    except CycleNotOpenError as exc:
+        await message.answer(str(exc))
+        return
+    if not suggestions:
+        await message.answer("В этом сборе пока нет предложенных книг.")
+        return
+    lines = [f"{item.book_id}: {item.book.title}" for item in suggestions]
+    await message.answer("Предложенные книги:\n" + "\n".join(lines))
+
+
+@dm_router.message(Command("remove_suggestion"))
+async def cmd_remove_suggestion(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    await state.update_data(remove_suggestion_club_id=club.id)
+    await state.set_state(RemoveSuggestionStates.waiting_book_id)
+    await message.answer(
+        "Отправьте ID книги из /suggestions отдельным сообщением. Для отмены: /cancel."
+    )
+
+
+@dm_router.message(Command("cancel"), RemoveSuggestionStates.waiting_book_id)
+async def cmd_cancel_remove_suggestion(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("Удаление книги отменено.")
+
+
+@dm_router.message(RemoveSuggestionStates.waiting_book_id, F.text, ~F.text.startswith("/"))
+async def on_remove_suggestion_book_id(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    raw_book_id = (message.text or "").strip()
+    if not raw_book_id.isdigit() or int(raw_book_id) < 1:
+        await message.answer(
+            "Нужен положительный числовой ID из /suggestions. Для отмены: /cancel."
+        )
+        return
+
+    data = await state.get_data()
+    club_id = data.get("remove_suggestion_club_id")
+    user_id = None if message.from_user is None else message.from_user.id
+    if not isinstance(club_id, int) or user_id is None:
+        await state.clear()
+        await message.answer(
+            "Не удалось определить клуб или пользователя. Запустите команду снова."
+        )
+        return
+
+    admin_clubs = await clubs_where_admin(bot, session, user_id)
+    if not any(club.id == club_id for club in admin_clubs):
+        await state.clear()
+        await message.answer("У вас больше нет прав администратора этого клуба.")
+        return
+
+    club = await SettingsRepository(session).get(club_id)
+    if club is None:
+        await state.clear()
+        await message.answer("Клуб не найден. Запустите команду снова.")
+        return
+
+    try:
+        removed = await CycleService(session, club).remove_suggestion(int(raw_book_id))
+    except CycleNotOpenError as exc:
+        await state.clear()
+        await message.answer(str(exc))
+        return
+    if removed:
+        await state.clear()
+        await message.answer("Книга удалена из предложений.")
+        return
+    await message.answer("В активном сборе книги с таким ID нет. Отправьте другой ID или /cancel.")
 
 
 @dm_router.message(Command("month_book"))

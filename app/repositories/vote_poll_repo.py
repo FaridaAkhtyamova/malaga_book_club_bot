@@ -10,27 +10,8 @@ class VotePollRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def add(
-        self,
-        *,
-        cycle_id: int,
-        chat_id: int,
-        message_id: int,
-        telegram_poll_id: str | None,
-        option_book_ids: Sequence[int],
-    ) -> VotePoll:
-        poll = VotePoll(
-            cycle_id=cycle_id,
-            chat_id=chat_id,
-            message_id=message_id,
-            telegram_poll_id=telegram_poll_id,
-            option_book_ids=list(option_book_ids),
-            is_open=True,
-        )
-        self.session.add(poll)
-        await self.session.commit()
-        await self.session.refresh(poll)
-        return poll
+    async def stage_many(self, polls: Sequence[VotePoll]) -> None:
+        self.session.add_all(polls)
 
     async def list_open(self, cycle_id: int) -> list[VotePoll]:
         result = await self.session.execute(

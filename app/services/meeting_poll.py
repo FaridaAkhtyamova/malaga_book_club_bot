@@ -39,6 +39,7 @@ WEEKDAYS_RU: tuple[str, ...] = (
 )
 
 _DATE_WEEKDAY = re.compile(r"^(\d{1,2}),\s+(.+)$")
+_DATE_MONTH_WEEKDAY = re.compile(r"^(\d{1,2})\.(\d{1,2})\s*\(([^)]+)\)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +222,26 @@ def merge_date_counts(parts: Sequence[DateVoteCounts]) -> DateVoteCounts:
 def parse_custom_date_option(text: str, *, now: datetime | None = None) -> date | None:
     stripped = text.strip()
     if stripped.casefold() in {OPTION_UNREAD, OPTION_SKIP}:
+        return None
+
+    date_weekday_match = _DATE_MONTH_WEEKDAY.fullmatch(stripped)
+    if date_weekday_match is not None:
+        day_num = int(date_weekday_match.group(1))
+        month_num = int(date_weekday_match.group(2))
+        weekday_name = date_weekday_match.group(3).strip().casefold()
+        try:
+            weekday = WEEKDAYS_RU.index(weekday_name)
+        except ValueError:
+            return None
+        start = _localized_today(now)
+        for offset in range(0, 367):
+            candidate = start + timedelta(days=offset)
+            if (
+                candidate.day == day_num
+                and candidate.month == month_num
+                and candidate.weekday() == weekday
+            ):
+                return candidate
         return None
 
     weekday_match = _DATE_WEEKDAY.fullmatch(stripped)
@@ -415,4 +436,4 @@ def _localized_today(now: datetime | None) -> date:
 
 
 def _format_date_option(day: date) -> str:
-    return f"{day.day:02d}.{day.month:02d}"
+    return f"{day.day:02d}.{day.month:02d} ({WEEKDAYS_RU[day.weekday()]})"

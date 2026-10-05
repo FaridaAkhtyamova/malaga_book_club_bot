@@ -1,15 +1,29 @@
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
-from app.db.models import Book
-from app.services.cycle_service import chunk_books_for_polls, collection_month_start, naive_utc
+import pytest
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import CopyMessage
+
+from app.bot.club_publish import filter_books_with_available_messages
+from app.db.models import Book, SuggestionCycle
+from app.services.cycle_service import (
+    CycleService,
+    PublishedVotePoll,
+    chunk_books_for_polls,
+    collection_month_start,
+    naive_utc,
+)
 from app.services.meeting_poll import (
     HourVoteCounts,
     format_meeting_hour,
+    meeting_poll_options,
     meeting_time_announcement,
     meeting_time_poll_options,
     merge_hour_counts,
+    parse_custom_date_option,
     tally_meeting_hours,
 )
 from app.services.vote_close import VoteCounts
@@ -31,6 +45,62 @@ def test_chunk_avoids_single_option_remainder() -> None:
 
 def test_chunk_requires_at_least_two_books() -> None:
     assert chunk_books_for_polls([_book(1)]) == []
+
+
+@pytest.mark.asyncio
+async def test_vote_chunks_skip_books_with_missing_source_messages() -> None:
+    books = [_book(1), _book(2), _book(3)]
+    bot = SimpleNamespace(
+        copy_message=AsyncMock(
+            side_effect=[
+                SimpleNamespace(message_id=101),
+                TelegramBadRequest(
+                    method=CopyMessage(chat_id=-100, from_chat_id=-100, message_id=2),
+                    message="message to copy not found",
+                ),
+                SimpleNamespace(message_id=103),
+            ]
+        ),
+        delete_message=AsyncMock(),
+    )
+
+    chunks = await filter_books_with_available_messages(
+        bot,
+        books,
+        {1: (-100, 1), 2: (-100, 2), 3: (-100, 3)},
+    )
+
+    assert [[book.id for book in chunk] for chunk in chunks] == [[1, 3]]
+    assert [call.kwargs for call in bot.delete_message.await_args_list] == [
+        {"chat_id": -100, "message_id": 101},
+        {"chat_id": -100, "message_id": 103},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_record_vote_polls_commits_rows_and_voting_status_together() -> None:
+    session = SimpleNamespace(add_all=MagicMock(), commit=AsyncMock())
+    cycle = SimpleNamespace(id=7, status=SuggestionCycle.STATUS_SUGGESTING)
+    service = CycleService(session, SimpleNamespace(id=1))  # type: ignore[arg-type]
+    published = [
+        PublishedVotePoll(
+            chat_id=-100123,
+            message_id=101,
+            telegram_poll_id="poll-1",
+            book_ids=[1, 2],
+        )
+    ]
+
+    await service.record_vote_polls(cycle, published, mark_voting=True)
+
+    session.add_all.assert_called_once()
+    rows = session.add_all.call_args.args[0]
+    assert len(rows) == 1
+    assert rows[0].cycle_id == cycle.id
+    assert rows[0].message_id == 101
+    assert rows[0].option_book_ids == [1, 2]
+    session.commit.assert_awaited_once()
+    assert cycle.status == SuggestionCycle.STATUS_VOTING
 
 
 def test_vote_counts_detect_tie() -> None:
@@ -56,6 +126,22 @@ def test_meeting_time_options_are_hourly_from_10_to_19() -> None:
     hours = [choice.hour for choice in choices]
     assert hours == list(range(10, 20))
     assert [choice.label for choice in choices] == [format_meeting_hour(hour) for hour in hours]
+
+
+def test_meeting_date_options_include_weekday() -> None:
+    choices = meeting_poll_options(datetime(2026, 10, 1, 12, tzinfo=UTC))
+
+    assert choices[0].label == "03.10 (суббота)"
+    assert choices[1].label == "04.10 (воскресенье)"
+
+
+def test_custom_date_option_with_weekday_is_parsed() -> None:
+    parsed = parse_custom_date_option(
+        "03.10 (суббота)",
+        now=datetime(2026, 10, 1, 12, tzinfo=UTC),
+    )
+
+    assert parsed == date(2026, 10, 3)
 
 
 def test_tally_meeting_hours_detect_tie() -> None:

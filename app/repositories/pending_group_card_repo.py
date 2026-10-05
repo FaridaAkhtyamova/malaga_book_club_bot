@@ -26,6 +26,18 @@ class PendingGroupCardRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_source(self, chat_id: int, message_id: int) -> PendingGroupCard | None:
+        result = await self.session.execute(
+            select(PendingGroupCard)
+            .where(
+                PendingGroupCard.chat_id == chat_id,
+                PendingGroupCard.message_id == message_id,
+            )
+            .order_by(PendingGroupCard.id.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
     async def list_pending(self, cycle_id: int) -> list[PendingGroupCard]:
         result = await self.session.execute(
             select(PendingGroupCard)
