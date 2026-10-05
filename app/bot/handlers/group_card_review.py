@@ -122,10 +122,7 @@ async def process_review_title(message: Message, state: FSMContext, session: Asy
         await message.answer("Эта карточка уже разобрана или не найдена.")
         return
     raw = (message.text or "").strip()
-    if raw == _KEEP:
-        title = (card.title or "").strip()
-    else:
-        title = raw
+    title = (card.title or "").strip() if raw == _KEEP else raw
     if not title:
         await message.answer("Нужно название. Отправьте его текстом.")
         return
@@ -135,7 +132,11 @@ async def process_review_title(message: Message, state: FSMContext, session: Asy
 
 
 @router.message(PendingCardStates.waiting_authors, F.text)
-async def process_review_authors(message: Message, state: FSMContext, session: AsyncSession) -> None:
+async def process_review_authors(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+) -> None:
     card = await _card_from_state(state, session)
     if card is None:
         await state.clear()

@@ -48,7 +48,7 @@ def test_chunk_requires_at_least_two_books() -> None:
 
 
 @pytest.mark.asyncio
-async def test_vote_chunks_skip_books_with_missing_source_messages() -> None:
+async def test_vote_chunks_keep_books_with_missing_or_unavailable_source_messages() -> None:
     books = [_book(1), _book(2), _book(3)]
     bot = SimpleNamespace(
         copy_message=AsyncMock(
@@ -58,7 +58,6 @@ async def test_vote_chunks_skip_books_with_missing_source_messages() -> None:
                     method=CopyMessage(chat_id=-100, from_chat_id=-100, message_id=2),
                     message="message to copy not found",
                 ),
-                SimpleNamespace(message_id=103),
             ]
         ),
         delete_message=AsyncMock(),
@@ -67,13 +66,12 @@ async def test_vote_chunks_skip_books_with_missing_source_messages() -> None:
     chunks = await filter_books_with_available_messages(
         bot,
         books,
-        {1: (-100, 1), 2: (-100, 2), 3: (-100, 3)},
+        {1: (-100, 1), 3: (-100, 3)},
     )
 
-    assert [[book.id for book in chunk] for chunk in chunks] == [[1, 3]]
+    assert [[book.id for book in chunk] for chunk in chunks] == [[1, 2, 3]]
     assert [call.kwargs for call in bot.delete_message.await_args_list] == [
         {"chat_id": -100, "message_id": 101},
-        {"chat_id": -100, "message_id": 103},
     ]
 
 
