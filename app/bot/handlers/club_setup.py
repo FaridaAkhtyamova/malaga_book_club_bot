@@ -1,3 +1,4 @@
+import logging
 from contextlib import suppress
 from datetime import date
 
@@ -85,6 +86,8 @@ router.message.filter(AdminFilter())
 dm_router = Router()
 dm_router.message.filter(F.chat.type == ChatType.PRIVATE)
 dm_router.callback_query.filter(AdminFilter(), F.message.chat.type == ChatType.PRIVATE)
+
+logger = logging.getLogger(__name__)
 
 _CLEAR_TOPIC = frozenset({"clear", "off", "none", "сброс"})
 _MEETING_POLL_STATES = StateFilter(MeetingPollStates)
@@ -201,15 +204,40 @@ async def cmd_start_vote(
         return
 
     suggestions = await service.suggestion_repo.list_suggestions(cycle.id)
+    for suggestion in suggestions:
+        if suggestion.source_chat_id is None or suggestion.source_message_id is None:
+            logger.warning(
+                "Suggestion has incomplete Telegram source linkage "
+                "(cycle_id=%s, suggestion_id=%s, book_id=%s, source_chat_id=%s, "
+                "source_message_id=%s)",
+                cycle.id,
+                suggestion.id,
+                suggestion.book_id,
+                suggestion.source_chat_id,
+                suggestion.source_message_id,
+            )
     source_messages = {
         suggestion.book_id: (suggestion.source_chat_id, suggestion.source_message_id)
         for suggestion in suggestions
         if suggestion.source_chat_id is not None and suggestion.source_message_id is not None
     }
     books = [book for chunk in chunks for book in chunk]
+    logger.info(
+        "Starting book vote for cycle %s: suggestions=%s with_source_message=%s",
+        cycle.id,
+        len(books),
+        len(source_messages),
+    )
     chunks = await filter_books_with_available_messages(bot, books, source_messages)
     if not chunks:
-        await message.answer("После проверки найдено меньше двух книг с доступными карточками.")
+        logger.error(
+            "Cannot create vote polls for cycle %s: %s books produced no valid poll chunks",
+            cycle.id,
+            len(books),
+        )
+        await message.answer(
+            "Не удалось сформировать опросы: для голосования нужно минимум две книги."
+        )
         return
 
     try:
@@ -218,6 +246,12 @@ async def cmd_start_vote(
         await message.answer(f"Не удалось опубликовать опросы: {exc}")
         return
 
+    logger.info(
+        "Published book vote for cycle %s: polls=%s books=%s",
+        cycle.id,
+        len(published),
+        sum(len(poll.book_ids) for poll in published),
+    )
     await record_vote_polls_or_stop(bot, service, cycle, published, mark_voting=True)
     await sync_suggestion_buttons(bot, session, club.id, enabled=False)
     same_thread = (

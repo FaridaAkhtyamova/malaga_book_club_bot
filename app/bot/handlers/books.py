@@ -746,13 +746,39 @@ async def _publish_to_group(
         )
         service = CycleService(session, club)
         cycle = await service.get_active_suggesting_cycle()
-        if cycle is not None:
-            await service.suggestion_repo.set_source_message(
+        if cycle is None:
+            logger.warning(
+                "Book card sent but no active suggestion cycle was found to link it "
+                "(book_id=%s, chat_id=%s, message_id=%s)",
+                book.id,
+                dest.chat_id,
+                sent.message_id,
+            )
+        else:
+            linked = await service.suggestion_repo.set_source_message(
                 cycle.id,
                 book.id,
                 dest.chat_id,
                 sent.message_id,
             )
+            if linked:
+                logger.info(
+                    "Linked sent Telegram book card to suggestion "
+                    "(cycle_id=%s, book_id=%s, chat_id=%s, message_id=%s)",
+                    cycle.id,
+                    book.id,
+                    dest.chat_id,
+                    sent.message_id,
+                )
+            else:
+                logger.error(
+                    "Book card sent but no suggestion row was updated "
+                    "(cycle_id=%s, book_id=%s, chat_id=%s, message_id=%s)",
+                    cycle.id,
+                    book.id,
+                    dest.chat_id,
+                    sent.message_id,
+                )
     except TelegramAPIError as exc:
         logger.exception(
             "Book card publication failed (book_id=%s, chat_id=%s, thread_id=%s): %s",
@@ -763,9 +789,10 @@ async def _publish_to_group(
         )
         return False
     logger.info(
-        "Book card published (book_id=%s, chat_id=%s, thread_id=%s)",
+        "Book card published (book_id=%s, chat_id=%s, message_id=%s, thread_id=%s)",
         book.id,
         dest.chat_id,
+        sent.message_id,
         thread_id,
     )
     return True

@@ -209,7 +209,7 @@ docker compose logs -f bot
 
 ## CI и обязательные проверки перед merge
 
-Workflow `CI` запускает тесты (`pytest`) для каждого push и pull request. Результат публикуется как status check `Tests`; если тесты падают, check не проходит.
+Workflow `CI` для каждого push и pull request запускает `ruff` (линтинг), `mypy` (проверка типов) и `pytest` (тесты). Результат публикуется как status check `Tests`; если любая проверка падает, check не проходит. Для pull request GitHub также предлагает шаблон с разделами для описания изменений и проверок.
 
 Чтобы GitHub блокировал merge до успешного прохождения проверок:
 

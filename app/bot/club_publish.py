@@ -86,12 +86,22 @@ async def filter_books_with_available_messages(
     source_messages: Mapping[int, tuple[int, int]],
 ) -> list[list[Book]]:
     available: list[Book] = []
+    checked = 0
+    unavailable = 0
+    without_source = 0
     for book in books:
         source = source_messages.get(book.id)
         if source is None:
-            logger.info("Skipping book %s: source Telegram message is unknown", book.id)
+            without_source += 1
+            logger.info(
+                "Book %s has no source Telegram message; keeping it for voting without copy check",
+                book.id,
+            )
+            available.append(book)
             continue
+
         chat_id, message_id = source
+        checked += 1
         try:
             copied = await bot.copy_message(
                 chat_id=chat_id,
@@ -100,12 +110,15 @@ async def filter_books_with_available_messages(
             )
         except TelegramAPIError as exc:
             logger.info(
-                "Skipping book %s: source Telegram message %s/%s is unavailable: %s",
-                book.id,
+                "Source Telegram message %s/%s for book %s is unavailable; "
+                "keeping the book for voting: %s",
                 chat_id,
                 message_id,
+                book.id,
                 exc,
             )
+            unavailable += 1
+            available.append(book)
             continue
 
         available.append(book)
@@ -119,7 +132,19 @@ async def filter_books_with_available_messages(
                 copied.message_id,
                 exc,
             )
-    return chunk_books_for_polls(available)
+
+    chunks = chunk_books_for_polls(available)
+    logger.info(
+        "Vote source-message check complete: books=%s checked=%s unavailable=%s "
+        "without_source=%s kept=%s poll_chunks=%s",
+        len(books),
+        checked,
+        unavailable,
+        without_source,
+        len(available),
+        len(chunks),
+    )
+    return chunks
 
 
 async def sync_suggestion_buttons(
