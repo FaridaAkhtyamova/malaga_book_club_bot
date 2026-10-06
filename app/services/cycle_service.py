@@ -227,6 +227,18 @@ class CycleService:
             raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
         return await self.suggestion_repo.list_suggestions(cycle.id)
 
+    async def list_user_suggestions(self, user_id: int) -> list[Suggestion]:
+        cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
+        if cycle is None:
+            raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
+        return await self.suggestion_repo.list_for_user(cycle.id, user_id)
+
+    async def remove_user_suggestion(self, book_id: int, user_id: int) -> bool:
+        cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
+        if cycle is None:
+            raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
+        return await self.suggestion_repo.remove_for_user(cycle.id, book_id, user_id)
+
     async def remove_suggestion(self, book_id: int) -> bool:
         cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
         if cycle is None:
@@ -639,13 +651,20 @@ def poll_question(month: int, index: int, total: int) -> str:
 
 def format_poll_option(book: Book, used: set[str]) -> str:
     authors = book.authors or "автор не указан"
-    label = f"{book.title} — {authors}"
-    if len(label) > POLL_OPTION_LIMIT:
-        label = f"{label[: POLL_OPTION_LIMIT - 1]}…"
-    if label in used:
+    base = f"{book.title} — {authors}"
+    pages = f" ({book.page_count} стр.)" if book.page_count is not None else ""
+    suffix = f" [{book.id}]" if f"{base}{pages}" in used else ""
+    budget = POLL_OPTION_LIMIT - len(pages) - len(suffix)
+    if len(base) > budget:
+        base = f"{base[: budget - 1]}…"
+    label = f"{base}{pages}{suffix}"
+    if label in used and not suffix:
         suffix = f" [{book.id}]"
-        budget = POLL_OPTION_LIMIT - len(suffix)
-        label = f"{label[:budget]}{suffix}"
+        budget = POLL_OPTION_LIMIT - len(pages) - len(suffix)
+        base = f"{book.title} — {authors}"
+        if len(base) > budget:
+            base = f"{base[: budget - 1]}…"
+        label = f"{base}{pages}{suffix}"
     used.add(label)
     return label
 

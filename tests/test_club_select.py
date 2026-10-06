@@ -70,6 +70,8 @@ def test_member_help_omits_clubs() -> None:
     assert "Карточки с тегом #выбор_книги" in text
     assert "/clubs" not in text
     assert "/suggest" in text
+    assert "/my_suggestions" in text
+    assert "/remove_my_suggestion ID" in text
     assert "/open_suggestions" not in text
     assert all(cmd.command != "clubs" for cmd in member_bot_commands())
 

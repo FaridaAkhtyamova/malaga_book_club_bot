@@ -54,7 +54,23 @@ class SuggestionRepository:
         result = await self.session.execute(
             update(Suggestion)
             .where(Suggestion.cycle_id == cycle_id, Suggestion.book_id == book_id)
-            .values(source_chat_id=chat_id, source_message_id=message_id)
+            .values(
+                source_chat_id=chat_id,
+                source_message_id=message_id,
+                source_reviewed=False,
+            )
+            .returning(Suggestion.id)
+        )
+        updated = result.scalar_one_or_none() is not None
+        if updated:
+            await self.session.commit()
+        return updated
+
+    async def mark_source_reviewed(self, cycle_id: int, book_id: int) -> bool:
+        result = await self.session.execute(
+            update(Suggestion)
+            .where(Suggestion.cycle_id == cycle_id, Suggestion.book_id == book_id)
+            .values(source_reviewed=True)
             .returning(Suggestion.id)
         )
         updated = result.scalar_one_or_none() is not None
@@ -96,12 +112,35 @@ class SuggestionRepository:
         )
         return list(result.scalars().all())
 
+    async def list_for_user(self, cycle_id: int, user_id: int) -> list[Suggestion]:
+        result = await self.session.execute(
+            select(Suggestion)
+            .where(Suggestion.cycle_id == cycle_id, Suggestion.user_id == user_id)
+            .options(selectinload(Suggestion.book))
+            .order_by(Suggestion.id.asc())
+        )
+        return list(result.scalars().all())
+
     async def remove(self, cycle_id: int, book_id: int) -> bool:
         result = await self.session.execute(
             delete(Suggestion).where(
                 Suggestion.cycle_id == cycle_id,
                 Suggestion.book_id == book_id,
             ).returning(Suggestion.id)
+        )
+        removed = result.scalar_one_or_none() is not None
+        await self.session.commit()
+        return removed
+
+    async def remove_for_user(self, cycle_id: int, book_id: int, user_id: int) -> bool:
+        result = await self.session.execute(
+            delete(Suggestion)
+            .where(
+                Suggestion.cycle_id == cycle_id,
+                Suggestion.book_id == book_id,
+                Suggestion.user_id == user_id,
+            )
+            .returning(Suggestion.id)
         )
         removed = result.scalar_one_or_none() is not None
         await self.session.commit()

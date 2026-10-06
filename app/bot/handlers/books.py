@@ -70,6 +70,67 @@ async def cmd_suggest(
     await begin_suggest(message, state, session, bot, query=query)
 
 
+@router.message(Command("my_suggestions"))
+async def cmd_my_suggestions(message: Message, session: AsyncSession, bot: Bot) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    club = await require_member_club(message, bot, session, user_id=user.id)
+    if club is None:
+        return
+    try:
+        suggestions = await CycleService(session, club).list_user_suggestions(user.id)
+    except CycleNotOpenError as exc:
+        await message.answer(str(exc))
+        return
+    if not suggestions:
+        await message.answer("В текущем сборе вы пока не предлагали книги.")
+        return
+
+    lines = [
+        f"{item.book_id}: {item.book.title}"
+        + (f" — {item.book.page_count} стр." if item.book.page_count is not None else "")
+        for item in suggestions
+    ]
+    await message.answer(
+        "Ваши книги в текущем сборе:\n"
+        + "\n".join(lines)
+        + "\n\nЧтобы убрать книгу, отправьте "
+        "`/remove_my_suggestion ID`."
+    )
+
+
+@router.message(Command("remove_my_suggestion"))
+async def cmd_remove_my_suggestion(
+    message: Message,
+    command: CommandObject,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    user = message.from_user
+    if user is None:
+        return
+    club = await require_member_club(message, bot, session, user_id=user.id)
+    if club is None:
+        return
+    raw_book_id = (command.args or "").strip()
+    if not raw_book_id.isdigit() or int(raw_book_id) < 1:
+        await message.answer("Использование: /remove_my_suggestion ID")
+        return
+    try:
+        removed = await CycleService(session, club).remove_user_suggestion(
+            int(raw_book_id),
+            user.id,
+        )
+    except CycleNotOpenError as exc:
+        await message.answer(str(exc))
+        return
+    if removed:
+        await message.answer("Книга удалена из ваших предложений текущего сбора.")
+    else:
+        await message.answer("Вашей книги с таким ID нет в текущем сборе.")
+
+
 @router.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def process_idle_text_as_query(
     message: Message,

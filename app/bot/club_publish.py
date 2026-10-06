@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import date
 
 from aiogram import Bot
@@ -18,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.bot.club_chat import club_admin_user_ids, send_html_card, send_with_topic_fallback
 from app.bot.keyboards.pending_card import pending_card_keyboard
 from app.bot.keyboards.suggest import suggest_dm_keyboard
+from app.bot.keyboards.vote_source_review import vote_source_review_keyboard
 from app.bot.media import cover_file_id
 from app.db.models import (
     Book,
@@ -65,6 +67,21 @@ _POLL_INTRO = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class BookSourceReview:
+    cycle_id: int
+    book: Book
+    source_chat_id: int | None
+    source_message_id: int | None
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class BookSourceCheck:
+    chunks: list[list[Book]]
+    needs_review: list[BookSourceReview]
+
+
 async def publish_club_announcement(bot: Bot, dest: ClubDestination, text: str) -> None:
     markup = await suggest_dm_keyboard(bot)
     await send_with_topic_fallback(
@@ -84,20 +101,39 @@ async def filter_books_with_available_messages(
     bot: Bot,
     books: Sequence[Book],
     source_messages: Mapping[int, tuple[int, int]],
-) -> list[list[Book]]:
+    *,
+    cycle_id: int,
+    reviewed_book_ids: set[int] | None = None,
+) -> BookSourceCheck:
     available: list[Book] = []
+    needs_review: list[BookSourceReview] = []
     checked = 0
     unavailable = 0
     without_source = 0
+    reviewed = 0
     for book in books:
+        if reviewed_book_ids is not None and book.id in reviewed_book_ids:
+            reviewed += 1
+            available.append(book)
+            logger.info("Book %s approved for voting by an administrator", book.id)
+            continue
+
         source = source_messages.get(book.id)
         if source is None:
             without_source += 1
             logger.info(
-                "Book %s has no source Telegram message; keeping it for voting without copy check",
+                "Book %s has no source Telegram message; marking it for admin review",
                 book.id,
             )
-            available.append(book)
+            needs_review.append(
+                BookSourceReview(
+                    cycle_id=cycle_id,
+                    book=book,
+                    source_chat_id=None,
+                    source_message_id=None,
+                    reason="source Telegram message is unknown",
+                )
+            )
             continue
 
         chat_id, message_id = source
@@ -111,14 +147,22 @@ async def filter_books_with_available_messages(
         except TelegramAPIError as exc:
             logger.info(
                 "Source Telegram message %s/%s for book %s is unavailable; "
-                "keeping the book for voting: %s",
+                "marking it for admin review: %s",
                 chat_id,
                 message_id,
                 book.id,
                 exc,
             )
             unavailable += 1
-            available.append(book)
+            needs_review.append(
+                BookSourceReview(
+                    cycle_id=cycle_id,
+                    book=book,
+                    source_chat_id=chat_id,
+                    source_message_id=message_id,
+                    reason=str(exc),
+                )
+            )
             continue
 
         available.append(book)
@@ -136,15 +180,142 @@ async def filter_books_with_available_messages(
     chunks = chunk_books_for_polls(available)
     logger.info(
         "Vote source-message check complete: books=%s checked=%s unavailable=%s "
-        "without_source=%s kept=%s poll_chunks=%s",
+        "without_source=%s admin_approved=%s kept=%s needs_review=%s poll_chunks=%s",
         len(books),
         checked,
         unavailable,
         without_source,
+        reviewed,
         len(available),
+        len(needs_review),
         len(chunks),
     )
-    return chunks
+    return BookSourceCheck(chunks=chunks, needs_review=needs_review)
+
+
+async def check_vote_book_sources(
+    bot: Bot,
+    service: CycleService,
+    cycle: SuggestionCycle,
+    books: Sequence[Book],
+) -> BookSourceCheck:
+    suggestions = await service.suggestion_repo.list_suggestions(cycle.id)
+    source_messages: dict[int, tuple[int, int]] = {}
+    reviewed_book_ids: set[int] = set()
+    for suggestion in suggestions:
+        if suggestion.source_reviewed:
+            reviewed_book_ids.add(suggestion.book_id)
+            continue
+        if suggestion.source_chat_id is None or suggestion.source_message_id is None:
+            logger.warning(
+                "Suggestion has incomplete Telegram source linkage "
+                "(cycle_id=%s, suggestion_id=%s, book_id=%s, source_chat_id=%s, "
+                "source_message_id=%s)",
+                cycle.id,
+                suggestion.id,
+                suggestion.book_id,
+                suggestion.source_chat_id,
+                suggestion.source_message_id,
+            )
+            continue
+        source_messages[suggestion.book_id] = (
+            suggestion.source_chat_id,
+            suggestion.source_message_id,
+        )
+
+    logger.info(
+        "Starting book source check for cycle %s: books=%s with_source_message=%s",
+        cycle.id,
+        len(books),
+        len(source_messages),
+    )
+    return await filter_books_with_available_messages(
+        bot,
+        books,
+        source_messages,
+        cycle_id=cycle.id,
+        reviewed_book_ids=reviewed_book_ids,
+    )
+
+
+def format_vote_source_review(check: BookSourceCheck) -> str:
+    lines = [
+        "Перед запуском голосования проверьте эти книги. "
+        "Подтвердите корректные книги кнопкой «Оставить в голосовании», "
+        "ошибочные уберите. Затем повторите /start_vote."
+    ]
+    for item in check.needs_review:
+        lines.append(format_vote_source_review_item(item))
+    return "\n".join(lines)
+
+
+async def notify_vote_source_review(
+    bot: Bot,
+    chat_id: int,
+    cycle_id: int,
+    check: BookSourceCheck,
+) -> str | None:
+    if not check.needs_review:
+        return None
+    text = format_vote_source_review(check)
+    admin_ids = await club_admin_user_ids(bot, chat_id)
+    if not admin_ids:
+        logger.warning(
+            "Could not deliver vote source review for chat %s: no admins found",
+            chat_id,
+        )
+    for admin_id in admin_ids:
+        try:
+            await bot.send_message(
+                admin_id,
+                "Проверьте книги перед голосованием. "
+                "Подтвердите книгу или уберите её кнопкой ниже.",
+            )
+        except TelegramAPIError as exc:
+            logger.warning(
+                "Could not send vote source review intro to admin %s in chat %s: %s",
+                admin_id,
+                chat_id,
+                exc,
+            )
+            continue
+        for item in check.needs_review:
+            try:
+                await bot.send_message(
+                    admin_id,
+                    format_vote_source_review_item(item),
+                    reply_markup=vote_source_review_keyboard(
+                        item.cycle_id,
+                        item.book.id,
+                    ),
+                )
+            except TelegramAPIError as exc:
+                logger.warning(
+                    "Could not send vote source review for book %s to admin %s: %s",
+                    item.book.id,
+                    admin_id,
+                    exc,
+                )
+    logger.warning(
+        "Vote for cycle %s paused for admin review: book_ids=%s",
+        cycle_id,
+        [item.book.id for item in check.needs_review],
+    )
+    return text
+
+
+def format_vote_source_review_item(item: BookSourceReview) -> str:
+    book = item.book
+    source = (
+        f"{item.source_chat_id}/{item.source_message_id}"
+        if item.source_chat_id is not None and item.source_message_id is not None
+        else "не зарегистрировано"
+    )
+    pages = f"{book.page_count} стр." if book.page_count is not None else "страниц не указано"
+    return (
+        f"ID {book.id}: {book.title} — {book.authors or 'автор не указан'}; "
+        f"{pages}; сообщение {source} недоступно ({item.reason})."
+    )
 
 
 async def sync_suggestion_buttons(
@@ -304,10 +475,20 @@ async def publish_winner_announcement(
 
 
 async def notify_admins(bot: Bot, text: str, chat_id: int) -> None:
-    for admin_id in await club_admin_user_ids(bot, chat_id):
+    admin_ids = await club_admin_user_ids(bot, chat_id)
+    if not admin_ids:
+        logger.warning("No Telegram admins available for notification in chat %s", chat_id)
+        return
+    for admin_id in admin_ids:
         try:
             await bot.send_message(admin_id, text)
-        except TelegramAPIError:
+        except TelegramAPIError as exc:
+            logger.warning(
+                "Could not send club admin notification to user %s for chat %s: %s",
+                admin_id,
+                chat_id,
+                exc,
+            )
             continue
 
 

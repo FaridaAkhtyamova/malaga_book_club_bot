@@ -258,6 +258,7 @@ class Suggestion(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     source_chat_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     source_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_reviewed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     cycle: Mapped[SuggestionCycle] = relationship(back_populates="suggestions")

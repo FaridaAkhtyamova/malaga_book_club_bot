@@ -12,11 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.admin_filter import AdminFilter
 from app.bot.callbacks.meeting import MeetingPollBookCallback
+from app.bot.callbacks.vote_source_review import VoteSourceReviewCallback
 from app.bot.club_chat import clubs_where_admin, send_html_card
 from app.bot.club_context import club_from_state, remember_club, require_admin_club
 from app.bot.club_publish import (
-    filter_books_with_available_messages,
+    check_vote_book_sources,
     notify_admins,
+    notify_vote_source_review,
     publish_meeting_poll,
     publish_meeting_time_poll,
     publish_vote_polls,
@@ -34,6 +36,7 @@ from app.bot.keyboards.meeting import meeting_poll_book_keyboard
 from app.bot.states.meeting import MeetingPollStates
 from app.bot.states.suggestion import RemoveSuggestionStates
 from app.db.models import SuggestionCycle
+from app.repositories.cycle_repo import CycleRepository
 from app.repositories.settings_repo import SettingsRepository
 from app.services.club_destination import (
     ClubDestination,
@@ -203,32 +206,14 @@ async def cmd_start_vote(
         await message.answer(str(exc))
         return
 
-    suggestions = await service.suggestion_repo.list_suggestions(cycle.id)
-    for suggestion in suggestions:
-        if suggestion.source_chat_id is None or suggestion.source_message_id is None:
-            logger.warning(
-                "Suggestion has incomplete Telegram source linkage "
-                "(cycle_id=%s, suggestion_id=%s, book_id=%s, source_chat_id=%s, "
-                "source_message_id=%s)",
-                cycle.id,
-                suggestion.id,
-                suggestion.book_id,
-                suggestion.source_chat_id,
-                suggestion.source_message_id,
-            )
-    source_messages = {
-        suggestion.book_id: (suggestion.source_chat_id, suggestion.source_message_id)
-        for suggestion in suggestions
-        if suggestion.source_chat_id is not None and suggestion.source_message_id is not None
-    }
     books = [book for chunk in chunks for book in chunk]
-    logger.info(
-        "Starting book vote for cycle %s: suggestions=%s with_source_message=%s",
-        cycle.id,
-        len(books),
-        len(source_messages),
-    )
-    chunks = await filter_books_with_available_messages(bot, books, source_messages)
+    source_check = await check_vote_book_sources(bot, service, cycle, books)
+    review_text = await notify_vote_source_review(bot, dest.chat_id, cycle.id, source_check)
+    if review_text is not None:
+        await message.answer(f"Голосование не запущено.\n\n{review_text}")
+        return
+
+    chunks = source_check.chunks
     if not chunks:
         logger.error(
             "Cannot create vote polls for cycle %s: %s books produced no valid poll chunks",
@@ -259,6 +244,52 @@ async def cmd_start_vote(
     )
     if not same_thread:
         await message.answer("Опросы опубликованы в группе.")
+
+
+@dm_router.callback_query(VoteSourceReviewCallback.filter())
+async def on_vote_source_review(
+    callback: CallbackQuery,
+    callback_data: VoteSourceReviewCallback,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    actor = callback.from_user
+    if actor is None:
+        await callback.answer()
+        return
+
+    cycle = await CycleRepository(session).get(callback_data.cycle_id)
+    if cycle is None or cycle.status != SuggestionCycle.STATUS_SUGGESTING:
+        await callback.answer("Этот сбор уже закрыт.", show_alert=True)
+        return
+    admin_clubs = await clubs_where_admin(bot, session, actor.id)
+    club = next((item for item in admin_clubs if item.id == cycle.club_id), None)
+    if club is None:
+        await callback.answer("Вы не администратор этого клуба.", show_alert=True)
+        return
+
+    repository = CycleService(session, club).suggestion_repo
+    if callback_data.action == "keep":
+        updated = await repository.mark_source_reviewed(
+            callback_data.cycle_id,
+            callback_data.book_id,
+        )
+        result_text = "Администратор подтвердил книгу для голосования."
+    elif callback_data.action == "remove":
+        updated = await repository.remove(callback_data.cycle_id, callback_data.book_id)
+        result_text = "Книга удалена из голосования."
+    else:
+        await callback.answer()
+        return
+
+    if not updated:
+        await callback.answer("Книга уже обработана или удалена.", show_alert=True)
+        return
+
+    await callback.answer("Решение сохранено.")
+    if isinstance(callback.message, Message):
+        original = callback.message.text or ""
+        await callback.message.edit_text(f"{original}\n\n{result_text}")
 
 
 @dm_router.message(Command("close_vote"))
@@ -383,6 +414,18 @@ async def cmd_reset_vote(
         await message.answer(str(exc))
         return
 
+    reset_books = [book for chunk in plan.chunks for book in chunk]
+    source_check = await check_vote_book_sources(bot, service, plan.cycle, reset_books)
+    review_text = await notify_vote_source_review(
+        bot,
+        dest.chat_id,
+        plan.cycle.id,
+        source_check,
+    )
+    if review_text is not None:
+        await message.answer(f"Сброс не выполнен, голосование не изменено.\n\n{review_text}")
+        return
+
     await stop_polls_quietly(
         bot,
         [*plan.open_vote_polls, *plan.open_meeting_polls, *plan.open_meeting_time_polls],
@@ -390,7 +433,7 @@ async def cmd_reset_vote(
     cycle = await service.apply_vote_reset(plan)
 
     try:
-        published = await publish_vote_polls(bot, dest, cycle, plan.chunks)
+        published = await publish_vote_polls(bot, dest, cycle, source_check.chunks)
     except TelegramAPIError as exc:
         await message.answer(f"Старые опросы закрыты, но новые не отправились: {exc}")
         return

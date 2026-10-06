@@ -38,6 +38,16 @@ COMMANDS: tuple[CommandInfo, ...] = (
         "/suggest — начать поиск книги в каталоге (личка с ботом)\n"
     ),
     CommandInfo(
+        "my_suggestions",
+        "Мои книги в текущем сборе",
+        "/my_suggestions — показать ваши книги текущего сбора",
+    ),
+    CommandInfo(
+        "remove_my_suggestion",
+        "Убрать свою книгу из сбора",
+        "/remove_my_suggestion ID — удалить свою книгу из текущего сбора",
+    ),
+    CommandInfo(
         "clubs",
         "Переключить группу в личке",
         "/clubs — переключить группу в личке, если вы состоите в нескольких",
