@@ -33,9 +33,12 @@ from app.bot.club_publish import (
 )
 from app.bot.commands import setup_bot_commands
 from app.bot.keyboards.meeting import meeting_poll_book_keyboard
+from app.bot.media import cover_file_id
+from app.bot.states.book_vote import WinnerCoverStates
 from app.bot.states.meeting import MeetingPollStates
 from app.bot.states.suggestion import RemoveSuggestionStates
-from app.db.models import SuggestionCycle
+from app.db.models import Book, SuggestionCycle
+from app.repositories.book_repo import BookRepository
 from app.repositories.cycle_repo import CycleRepository
 from app.repositories.settings_repo import SettingsRepository
 from app.services.club_destination import (
@@ -297,6 +300,7 @@ async def cmd_close_vote(
     message: Message,
     session: AsyncSession,
     bot: Bot,
+    state: FSMContext,
 ) -> None:
     club = await require_admin_club(message, bot, session)
     if club is None:
@@ -343,36 +347,25 @@ async def cmd_close_vote(
     if len(leaders) == 1:
         winner = leaders[0]
         await service.apply_winner(cycle, winner)
-        try:
-            await publish_winner_announcement(
-                bot,
-                dest,
-                winner_announcement(cycle, winner),
-                winner.cover_url,
+        if not winner.cover_url:
+            await state.update_data(
+                winner_cover_club_id=club.id,
+                winner_cover_cycle_id=cycle.id,
+                winner_cover_book_id=winner.id,
             )
-        except TelegramAPIError as exc:
-            await message.answer(f"Книга выбрана, но анонс не отправился: {exc}")
-            return
-        try:
-            ok = await _publish_and_record_meeting_poll(
-                bot, dest, service, cycle, meeting_subject(cycle, winner)
-            )
-        except TelegramAPIError as exc:
+            await state.set_state(WinnerCoverStates.waiting_photo)
             await message.answer(
-                f"Книга выбрана, но опрос дат встречи не отправился: {exc}\n"
-                "Можно повторить командой /start_meeting_poll."
+                f"Книга выбрана: «{winner.title}». Отправьте фото обложки сюда, "
+                "чтобы я сохранил её и опубликовал книгу в группе. "
+                "Опрос дат запускается отдельно командой /start_meeting_poll."
             )
             return
-        if not ok:
-            await message.answer(
-                "Книга выбрана, но опрос дат встречи не записался.\n"
-                "Можно повторить командой /start_meeting_poll."
-            )
+        if not await _publish_selected_book(message, bot, dest, cycle, winner):
             return
-        if not same_thread:
-            await message.answer(
-                "Голосование закрыто. Опрос дат встречи опубликован в группе."
-            )
+        await message.answer(
+            "Голосование закрыто, книга выбрана и опубликована в группе. "
+            "Опрос дат можно запустить отдельно командой /start_meeting_poll."
+        )
         return
 
     chunks = chunk_books_for_polls(leaders)
@@ -384,6 +377,104 @@ async def cmd_close_vote(
     await record_vote_polls_or_stop(bot, service, cycle, published)
     if not same_thread:
         await message.answer("Ничья. Второй тур опубликован в группе.")
+
+
+@dm_router.message(WinnerCoverStates.waiting_photo, F.photo | F.document)
+async def process_winner_cover(
+    message: Message,
+    state: FSMContext,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    if message.from_user is None:
+        await message.answer("Не удалось определить администратора. Отправьте фото обложки.")
+        return
+
+    data = await state.get_data()
+    club_id = data.get("winner_cover_club_id")
+    cycle_id = data.get("winner_cover_cycle_id")
+    book_id = data.get("winner_cover_book_id")
+    if (
+        not isinstance(club_id, int)
+        or not isinstance(cycle_id, int)
+        or not isinstance(book_id, int)
+    ):
+        await state.clear()
+        await message.answer("Запрос обложки устарел. Книга уже выбрана.")
+        return
+
+    cycle = await CycleRepository(session).get(cycle_id)
+    if (
+        cycle is None
+        or cycle.club_id != club_id
+        or cycle.winner_book_id != book_id
+        or cycle.status != SuggestionCycle.STATUS_CLOSED
+    ):
+        await state.clear()
+        await message.answer("Запрос обложки устарел. Книга уже выбрана.")
+        return
+
+    club = next(
+        (
+            item
+            for item in await clubs_where_admin(bot, session, message.from_user.id)
+            if item.id == club_id
+        ),
+        None,
+    )
+    if club is None:
+        await state.clear()
+        await message.answer("Вы больше не администратор этого клуба.")
+        return
+
+    cover_id = cover_file_id(message)
+    if cover_id is None:
+        await message.answer("Не удалось прочитать изображение. Отправьте фото или файл-картинку.")
+        return
+
+    service = CycleService(session, club)
+    book = await service.book_for_cycle(cycle)
+    if book is None or book.id != book_id:
+        await state.clear()
+        await message.answer("Не удалось найти выбранную книгу.")
+        return
+
+    saved = await BookRepository(session).set_cover(book.id, cover_id)
+    if saved is None:
+        await state.clear()
+        await message.answer("Не удалось сохранить обложку выбранной книги.")
+        return
+
+    dest = destination_of(club)
+    if dest is None:
+        await state.clear()
+        await message.answer("Обложка сохранена, но группа клуба не привязана.")
+        return
+    if not await _publish_selected_book(message, bot, dest, cycle, saved):
+        return
+
+    await state.clear()
+    await message.answer(
+        "Обложка сохранена, выбранная книга опубликована в группе. "
+        "Опрос дат можно запустить отдельно командой /start_meeting_poll."
+    )
+
+
+@dm_router.message(
+    WinnerCoverStates.waiting_photo,
+    F.text,
+    ~F.text.startswith("/"),
+)
+async def remind_winner_cover_upload(message: Message) -> None:
+    await message.answer("Отправьте фото обложки или файл-картинку.")
+
+
+@dm_router.message(Command("cancel"), WinnerCoverStates.waiting_photo)
+async def cmd_cancel_winner_cover(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer(
+        "Загрузка обложки отменена. Книга уже выбрана; опубликовать её можно командой /month_book."
+    )
 
 
 @dm_router.message(Command("reset_vote"))
@@ -819,8 +910,8 @@ async def cmd_cycle_status(message: Message, session: AsyncSession, bot: Bot) ->
     topic = (
         str(settings.suggest_topic_id) if settings.suggest_topic_id is not None else "не задан"
     )
-    suggest_day = str(settings.suggest_day) if settings.suggest_day is not None else "не задан"
-    vote_day = str(settings.vote_day) if settings.vote_day is not None else "не задан"
+    suggest_day = _day_setting_text(settings.suggest_day)
+    vote_day = _day_setting_text(settings.vote_day)
 
     lines = [
         f"Группа: {group}",
@@ -852,6 +943,14 @@ async def cmd_cycle_status(message: Message, session: AsyncSession, bot: Bot) ->
             lines.append(f"Время встречи: {format_meeting_hour(cycle.winner_meeting_hour)}")
 
     await message.answer("\n".join(lines))
+
+
+def _day_setting_text(day: int | None) -> str:
+    if day is None:
+        return "не задан"
+    if day == 0:
+        return "выключено (0)"
+    return str(day)
 
 
 @dm_router.message(Command("suggestions"))
@@ -1011,6 +1110,26 @@ async def _publish_and_record_meeting_poll(
     if published is None:
         return False
     await service.record_meeting_poll(cycle, published)
+    return True
+
+
+async def _publish_selected_book(
+    message: Message,
+    bot: Bot,
+    dest: ClubDestination,
+    cycle: SuggestionCycle,
+    book: Book,
+) -> bool:
+    try:
+        await publish_winner_announcement(
+            bot,
+            dest,
+            winner_announcement(cycle, book),
+            book.cover_url,
+        )
+    except TelegramAPIError as exc:
+        await message.answer(f"Книга выбрана, но анонс не отправился: {exc}")
+        return False
     return True
 
 

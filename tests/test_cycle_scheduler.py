@@ -7,12 +7,17 @@ from app.services.club_scheduler import create_scheduler
 from app.services.cycle_service import CycleService, ScheduledSuggestionReminder
 
 
-def _service(*, cycle: object | None, vote_day: int = 15) -> CycleService:
+def _service(
+    *,
+    cycle: object | None,
+    suggest_day: int | None = None,
+    vote_day: int | None = 15,
+) -> CycleService:
     club = SimpleNamespace(
         id=1,
         group_chat_id=-100123,
         announce_hour=10,
-        suggest_day=None,
+        suggest_day=suggest_day,
         vote_day=vote_day,
     )
     service = CycleService(None, club)  # type: ignore[arg-type]
@@ -48,6 +53,35 @@ async def test_run_scheduled_skips_reminder_without_open_cycle() -> None:
     action = await service.run_scheduled(datetime(2026, 10, 14, 10, tzinfo=UTC))
 
     assert action is None
+
+
+async def test_zero_days_disable_scheduled_actions() -> None:
+    service = _service(cycle=SimpleNamespace(target_month=10), suggest_day=0, vote_day=0)
+
+    action = await service.run_scheduled(datetime(2026, 10, 15, 10, tzinfo=UTC))
+
+    assert action is None
+    service.cycle_repo.get_latest_suggesting.assert_not_awaited()
+
+
+async def test_zero_suggest_day_is_allowed_while_vote_day_is_set() -> None:
+    service = _service(cycle=None, vote_day=15)
+    service.settings_repo.save = AsyncMock(return_value=service.club)
+
+    settings = await service.set_suggest_day(0)
+
+    assert settings.suggest_day == 0
+    service.settings_repo.save.assert_awaited_once_with(service.club)
+
+
+async def test_zero_vote_day_is_allowed_while_suggest_day_is_set() -> None:
+    service = _service(cycle=None, suggest_day=20)
+    service.settings_repo.save = AsyncMock(return_value=service.club)
+
+    settings = await service.set_vote_day(0)
+
+    assert settings.vote_day == 0
+    service.settings_repo.save.assert_awaited_once_with(service.club)
 
 
 async def test_scheduler_rolls_back_and_continues_after_club_failure(monkeypatch) -> None:
