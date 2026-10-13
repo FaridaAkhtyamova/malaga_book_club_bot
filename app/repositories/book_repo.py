@@ -76,3 +76,13 @@ class BookRepository:
         await self.session.commit()
         await self.session.refresh(entity)
         return entity
+
+    async def set_cover(self, book_id: int, cover_url: str) -> Book | None:
+        books = await self.get_by_ids([book_id])
+        if not books:
+            return None
+        book = books[0]
+        book.cover_url = cover_url[:500]
+        await self.session.commit()
+        await self.session.refresh(book)
+        return book

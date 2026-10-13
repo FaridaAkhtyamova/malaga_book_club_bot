@@ -38,6 +38,16 @@ COMMANDS: tuple[CommandInfo, ...] = (
         "/suggest — начать поиск книги в каталоге (личка с ботом)\n"
     ),
     CommandInfo(
+        "my_suggestions",
+        "Мои книги в текущем сборе",
+        "/my_suggestions — показать ваши книги текущего сбора",
+    ),
+    CommandInfo(
+        "remove_my_suggestion",
+        "Убрать свою книгу из сбора",
+        "/remove_my_suggestion ID — удалить свою книгу из текущего сбора",
+    ),
+    CommandInfo(
         "clubs",
         "Переключить группу в личке",
         "/clubs — переключить группу в личке, если вы состоите в нескольких",
@@ -46,7 +56,8 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "cancel",
         "Отменить текущий ввод",
-        "/cancel — отменить поиск, проверку карточки, опрос дат или создание встречи",
+        "/cancel — отменить поиск, проверку карточки, загрузку обложки, "
+        "опрос дат или создание встречи",
     ),
     CommandInfo(
         "set_group",
@@ -66,13 +77,15 @@ COMMANDS: tuple[CommandInfo, ...] = (
     CommandInfo(
         "set_suggest_day",
         "День автооткрытия сбора книг",
-        "/set_suggest_day 15 — каждый месяц 15-го открывать сбор (день от 1 до 28)",
+        "/set_suggest_day 15 — каждый месяц 15-го открывать сбор; "
+        "/set_suggest_day 0 — отключить автоматику",
         admin=True,
     ),
     CommandInfo(
         "set_vote_day",
         "День автозапуска голосования",
-        "/set_vote_day 25 — каждый месяц 25-го запускать опросы (позже дня сбора)",
+        "/set_vote_day 25 — каждый месяц 25-го запускать опросы (позже дня сбора); "
+        "/set_vote_day 0 — отключить автоматику",
         admin=True,
     ),
     CommandInfo(

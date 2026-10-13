@@ -200,14 +200,14 @@ class CycleService:
 
     async def set_suggest_day(self, day: int) -> ClubSettings:
         _validate_day(day)
-        if self.club.vote_day is not None and day >= self.club.vote_day:
+        if day != 0 and self.club.vote_day not in (None, 0) and day >= self.club.vote_day:
             raise InvalidDayError("День предложений должен быть раньше дня голосования.")
         self.club.suggest_day = day
         return await self.settings_repo.save(self.club)
 
     async def set_vote_day(self, day: int) -> ClubSettings:
         _validate_day(day)
-        if self.club.suggest_day is not None and day <= self.club.suggest_day:
+        if day != 0 and self.club.suggest_day not in (None, 0) and day <= self.club.suggest_day:
             raise InvalidDayError("День голосования должен быть позже дня предложений.")
         self.club.vote_day = day
         return await self.settings_repo.save(self.club)
@@ -226,6 +226,18 @@ class CycleService:
         if cycle is None:
             raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
         return await self.suggestion_repo.list_suggestions(cycle.id)
+
+    async def list_user_suggestions(self, user_id: int) -> list[Suggestion]:
+        cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
+        if cycle is None:
+            raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
+        return await self.suggestion_repo.list_for_user(cycle.id, user_id)
+
+    async def remove_user_suggestion(self, book_id: int, user_id: int) -> bool:
+        cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
+        if cycle is None:
+            raise CycleNotOpenError("Сейчас нет открытого сбора предложений.")
+        return await self.suggestion_repo.remove_for_user(cycle.id, book_id, user_id)
 
     async def remove_suggestion(self, book_id: int) -> bool:
         cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
@@ -560,7 +572,11 @@ class CycleService:
         if current.hour < self.club.announce_hour:
             return None
 
-        if self.club.suggest_day is not None and current.day == self.club.suggest_day:
+        if (
+            self.club.suggest_day is not None
+            and self.club.suggest_day > 0
+            and current.day == self.club.suggest_day
+        ):
             year, month = next_year_month(current)
             existing = await self.cycle_repo.get_by_month(self.club.id, year, month)
             if existing is None:
@@ -568,23 +584,24 @@ class CycleService:
                 return ScheduledAnnounce(text=text)
 
         tomorrow = current + timedelta(days=1)
-        if self.club.vote_day is not None and tomorrow.day == self.club.vote_day:
-            cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
-            if cycle is not None:
-                return ScheduledSuggestionReminder(cycle=cycle)
+        if self.club.vote_day is not None and self.club.vote_day > 0:
+            if tomorrow.day == self.club.vote_day:
+                cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
+                if cycle is not None:
+                    return ScheduledSuggestionReminder(cycle=cycle)
 
-        if self.club.vote_day is not None and current.day == self.club.vote_day:
-            cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
-            if cycle is not None:
-                try:
-                    vote_cycle, chunks = await self.prepare_vote()
-                except NotEnoughBooksError:
-                    return None
-                except PendingGroupCardsNeedReviewError as exc:
-                    if current.hour != self.club.announce_hour:
+            if current.day == self.club.vote_day:
+                cycle = await self.cycle_repo.get_latest_suggesting(self.club.id)
+                if cycle is not None:
+                    try:
+                        vote_cycle, chunks = await self.prepare_vote()
+                    except NotEnoughBooksError:
                         return None
-                    return ScheduledPendingReview(cards=exc.cards)
-                return ScheduledVote(cycle=vote_cycle, chunks=chunks)
+                    except PendingGroupCardsNeedReviewError as exc:
+                        if current.hour != self.club.announce_hour:
+                            return None
+                        return ScheduledPendingReview(cards=exc.cards)
+                    return ScheduledVote(cycle=vote_cycle, chunks=chunks)
 
         return None
 
@@ -639,13 +656,20 @@ def poll_question(month: int, index: int, total: int) -> str:
 
 def format_poll_option(book: Book, used: set[str]) -> str:
     authors = book.authors or "автор не указан"
-    label = f"{book.title} — {authors}"
-    if len(label) > POLL_OPTION_LIMIT:
-        label = f"{label[: POLL_OPTION_LIMIT - 1]}…"
-    if label in used:
+    base = f"{book.title} — {authors}"
+    pages = f" ({book.page_count} стр.)" if book.page_count is not None else ""
+    suffix = f" [{book.id}]" if f"{base}{pages}" in used else ""
+    budget = POLL_OPTION_LIMIT - len(pages) - len(suffix)
+    if len(base) > budget:
+        base = f"{base[: budget - 1]}…"
+    label = f"{base}{pages}{suffix}"
+    if label in used and not suffix:
         suffix = f" [{book.id}]"
-        budget = POLL_OPTION_LIMIT - len(suffix)
-        label = f"{label[:budget]}{suffix}"
+        budget = POLL_OPTION_LIMIT - len(pages) - len(suffix)
+        base = f"{book.title} — {authors}"
+        if len(base) > budget:
+            base = f"{base[: budget - 1]}…"
+        label = f"{base}{pages}{suffix}"
     used.add(label)
     return label
 
@@ -700,8 +724,8 @@ def format_book_card(book: Book, suggester: User) -> str:
 
 
 def _validate_day(day: int) -> None:
-    if not 1 <= day <= 28:
-        raise InvalidDayError("День должен быть от 1 до 28.")
+    if not 0 <= day <= 28:
+        raise InvalidDayError("День должен быть от 0 до 28 (0 — отключить автоматику).")
 
 
 def _plain_description(raw: str | None) -> str:

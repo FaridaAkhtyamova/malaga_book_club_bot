@@ -14,6 +14,7 @@ from app.services.cycle_service import (
     PublishedVotePoll,
     chunk_books_for_polls,
     collection_month_start,
+    format_poll_option,
     naive_utc,
 )
 from app.services.meeting_poll import (
@@ -48,31 +49,79 @@ def test_chunk_requires_at_least_two_books() -> None:
 
 
 @pytest.mark.asyncio
-async def test_vote_chunks_keep_books_with_missing_or_unavailable_source_messages() -> None:
-    books = [_book(1), _book(2), _book(3)]
+async def test_vote_source_check_reports_missing_and_unavailable_messages_for_review() -> None:
+    books = [_book(1), _book(2), _book(3), _book(4)]
     bot = SimpleNamespace(
         copy_message=AsyncMock(
             side_effect=[
                 SimpleNamespace(message_id=101),
                 TelegramBadRequest(
-                    method=CopyMessage(chat_id=-100, from_chat_id=-100, message_id=2),
+                    method=CopyMessage(chat_id=-100, from_chat_id=-100, message_id=3),
                     message="message to copy not found",
                 ),
+                SimpleNamespace(message_id=104),
             ]
         ),
         delete_message=AsyncMock(),
     )
 
-    chunks = await filter_books_with_available_messages(
+    result = await filter_books_with_available_messages(
         bot,
         books,
-        {1: (-100, 1), 3: (-100, 3)},
+        {1: (-100, 1), 3: (-100, 3), 4: (-100, 4)},
+        cycle_id=7,
     )
 
-    assert [[book.id for book in chunk] for chunk in chunks] == [[1, 2, 3]]
+    assert [[book.id for book in chunk] for chunk in result.chunks] == [[1, 4]]
+    assert [item.book.id for item in result.needs_review] == [2, 3]
+    assert result.needs_review[0].reason == "source Telegram message is unknown"
+    assert "message to copy not found" in result.needs_review[1].reason
     assert [call.kwargs for call in bot.delete_message.await_args_list] == [
         {"chat_id": -100, "message_id": 101},
+        {"chat_id": -100, "message_id": 104},
     ]
+
+
+def test_format_poll_option_includes_page_count_within_telegram_limit() -> None:
+    book = _book(1)
+    book.title = "A" * 110
+    book.authors = "Author"
+    book.page_count = 320
+
+    label = format_poll_option(book, set())
+
+    assert label.endswith("(320 стр.)")
+    assert len(label) <= 100
+
+
+def test_format_poll_option_omits_unknown_page_count() -> None:
+    label = format_poll_option(_book(1), set())
+    assert "(None стр.)" not in label
+
+
+@pytest.mark.asyncio
+async def test_vote_source_check_keeps_admin_approved_book_without_copying() -> None:
+    book = _book(1)
+    bot = SimpleNamespace(
+        copy_message=AsyncMock(return_value=SimpleNamespace(message_id=102)),
+        delete_message=AsyncMock(),
+    )
+
+    result = await filter_books_with_available_messages(
+        bot,
+        [book, _book(2)],
+        {1: (-100, 1), 2: (-100, 2)},
+        cycle_id=7,
+        reviewed_book_ids={1},
+    )
+
+    assert [[item.id for item in chunk] for chunk in result.chunks] == [[1, 2]]
+    assert result.needs_review == []
+    bot.copy_message.assert_awaited_once_with(
+        chat_id=-100,
+        from_chat_id=-100,
+        message_id=2,
+    )
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,8 @@ from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.bot.club_publish import (
+    check_vote_book_sources,
+    notify_vote_source_review,
     publish_club_announcement,
     publish_vote_polls,
     record_vote_polls_or_stop,
@@ -83,10 +85,23 @@ async def run_scheduled_jobs(bot: Bot) -> None:
                 elif isinstance(action, ScheduledPendingReview):
                     await send_pending_card_reviews(bot, action.cards, session)
                 elif isinstance(action, ScheduledVote):
-                    published = await publish_vote_polls(bot, dest, action.cycle, action.chunks)
-                    await record_vote_polls_or_stop(
-                        bot, service, action.cycle, published, mark_voting=True
+                    books = [book for chunk in action.chunks for book in chunk]
+                    source_check = await check_vote_book_sources(
+                        bot, service, action.cycle, books
                     )
+                    review_text = await notify_vote_source_review(
+                        bot,
+                        dest.chat_id,
+                        action.cycle.id,
+                        source_check,
+                    )
+                    if review_text is None:
+                        published = await publish_vote_polls(
+                            bot, dest, action.cycle, source_check.chunks
+                        )
+                        await record_vote_polls_or_stop(
+                            bot, service, action.cycle, published, mark_voting=True
+                        )
             except Exception:
                 logger.exception("Failed to publish scheduled club message for club %s", club.id)
                 await session.rollback()
