@@ -1,16 +1,21 @@
+from contextlib import suppress
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.admin_filter import AdminFilter
+from app.bot.callbacks.meeting import MeetingInviteChoiceCallback
+from app.bot.club_chat import clubs_where_admin
 from app.bot.club_context import club_from_state, remember_club, require_admin_club
 from app.bot.club_publish import publish_meeting_invite
+from app.bot.keyboards.meeting import meeting_invite_choice_keyboard
 from app.bot.states.meeting import MeetingInviteStates
 from app.core.config import get_settings
 from app.services.club_destination import ClubDestination, destination_of
@@ -28,11 +33,14 @@ from app.services.meeting_poll import format_meeting_day
 
 router = Router()
 router.message.filter(AdminFilter(), F.chat.type == ChatType.PRIVATE)
+router.callback_query.filter(AdminFilter(), F.message.chat.type == ChatType.PRIVATE)
 
 _MEETING_STATES = StateFilter(MeetingInviteStates)
 _ASK_DATE = "Дата встречи ещё не выбрана. Напишите её как 25.09 или 25.09.2026."
 _ASK_TIME = "Напишите время начала, например 19 или 12.5. Встреча продлится 1,5 часа по Малаге."
 _ASK_TITLE = "Книга ещё не выбрана. Напишите название для приглашения."
+_ASK_OTHER_TITLE = "Напишите название встречи для приглашения."
+_ASK_INVITE_CHOICE = "Создать приглашение для выбранной темы или для другой встречи?"
 _CANCELLED = "Создание встречи отменено."
 _DATE_PAST = "Эта дата уже прошла. Напишите другую."
 
@@ -166,14 +174,85 @@ async def cmd_create_meeting(
 
     await remember_club(state, club)
     book_title, meeting_day, meeting_hour = await CycleService(session, club).get_selected_meeting()
+    await state.update_data(
+        meeting_mode="cycle",
+        book_title=book_title,
+        meeting_date=None if meeting_day is None else meeting_day.isoformat(),
+        meeting_hour=meeting_hour,
+    )
+    if book_title is None:
+        await _start_other_meeting(message, state)
+        return
+    await state.set_state(MeetingInviteStates.waiting_choice)
+    await message.answer(
+        f"{_ASK_INVITE_CHOICE}\nТема встречи: «{book_title}».",
+        reply_markup=meeting_invite_choice_keyboard(),
+    )
+
+
+async def _start_other_meeting(message: Message, state: FSMContext) -> None:
+    await state.update_data(
+        meeting_mode="other",
+        book_title=None,
+        meeting_date=None,
+        meeting_hour=None,
+    )
+    await state.set_state(MeetingInviteStates.waiting_title)
+    await message.answer(_ASK_OTHER_TITLE)
+
+
+@router.callback_query(
+    MeetingInviteStates.waiting_choice,
+    MeetingInviteChoiceCallback.filter(),
+)
+async def on_meeting_invite_choice(
+    callback: CallbackQuery,
+    callback_data: MeetingInviteChoiceCallback,
+    session: AsyncSession,
+    state: FSMContext,
+    bot: Bot,
+) -> None:
+    origin = callback.message
+    user = callback.from_user
+    if not isinstance(origin, Message) or user is None:
+        await callback.answer()
+        return
+
+    club = await club_from_state(state, session)
+    if club is None or club.id not in {
+        admin_club.id for admin_club in await clubs_where_admin(bot, session, user.id)
+    }:
+        await callback.answer("Нет доступа к этой группе.", show_alert=True)
+        await state.clear()
+        return
+    dest = destination_of(club)
+    if dest is None:
+        await callback.answer()
+        await state.clear()
+        await origin.answer("Сначала привяжите группу командой /set_group.")
+        return
+
+    with suppress(TelegramAPIError):
+        await origin.edit_reply_markup(reply_markup=None)
+
+    if callback_data.action == "other":
+        await callback.answer()
+        await _start_other_meeting(origin, state)
+        return
+    if callback_data.action != "selected":
+        await callback.answer("Неизвестный выбор.", show_alert=True)
+        return
+
+    await callback.answer()
+    data = await state.get_data()
     await _prompt_meeting_step(
-        message,
+        origin,
         state,
         bot,
         dest,
-        meeting_day=meeting_day,
-        book_title=book_title,
-        meeting_hour=meeting_hour,
+        meeting_day=_stored_day(data),
+        book_title=_stored_title(data),
+        meeting_hour=_stored_hour(data),
     )
 
 
@@ -209,14 +288,16 @@ async def on_meeting_date(
         return
     await remember_club(state, club)
     service = CycleService(session, club)
-    cycle = await service.get_latest_cycle()
-    if cycle is not None:
-        await service.apply_meeting_date(cycle, meeting_day)
-
     data = await state.get_data()
+    is_other_meeting = data.get("meeting_mode") == "other"
+    if not is_other_meeting:
+        cycle = await service.get_latest_cycle()
+        if cycle is not None:
+            await service.apply_meeting_date(cycle, meeting_day)
+
     book_title = _stored_title(data)
     meeting_hour = _stored_hour(data)
-    if book_title is None or meeting_hour is None:
+    if not is_other_meeting and (book_title is None or meeting_hour is None):
         cycle_title, _, cycle_hour = await service.get_selected_meeting()
         if book_title is None:
             book_title = cycle_title
@@ -245,14 +326,16 @@ async def on_meeting_title(
     state: FSMContext,
     bot: Bot,
 ) -> None:
+    data = await state.get_data()
     title = (message.text or "").strip()
     if not title:
-        await message.answer(_ASK_TITLE)
+        prompt = _ASK_OTHER_TITLE if data.get("meeting_mode") == "other" else _ASK_TITLE
+        await message.answer(prompt)
         return
 
-    data = await state.get_data()
     meeting_day = _stored_day(data)
     meeting_hour = _stored_hour(data)
+    is_other_meeting = data.get("meeting_mode") == "other"
     club = await club_from_state(state, session)
     if club is None:
         club = await require_admin_club(message, bot, session)
@@ -263,7 +346,7 @@ async def on_meeting_title(
         await state.clear()
         await message.answer("Сначала привяжите группу командой /set_group.")
         return
-    if meeting_day is None or meeting_hour is None:
+    if not is_other_meeting and (meeting_day is None or meeting_hour is None):
         _, cycle_day, cycle_hour = await CycleService(session, club).get_selected_meeting()
         meeting_day = meeting_day or cycle_day
         meeting_hour = meeting_hour if meeting_hour is not None else cycle_hour
@@ -303,7 +386,8 @@ async def on_meeting_time(
     data = await state.get_data()
     meeting_day = _stored_day(data)
     book_title = _stored_title(data)
-    if meeting_day is None or book_title is None:
+    is_other_meeting = data.get("meeting_mode") == "other"
+    if not is_other_meeting and (meeting_day is None or book_title is None):
         cycle_title, cycle_day, _ = await CycleService(session, club).get_selected_meeting()
         meeting_day = meeting_day or cycle_day
         book_title = book_title or cycle_title
@@ -319,6 +403,17 @@ async def on_meeting_time(
             )
             return
         await state.update_data(book_title=book_title, meeting_date=meeting_day.isoformat())
+    elif meeting_day is None or book_title is None:
+        await _prompt_meeting_step(
+            message,
+            state,
+            bot,
+            dest,
+            meeting_day=meeting_day,
+            book_title=book_title,
+            meeting_hour=None,
+        )
+        return
 
     try:
         parsed = parse_meeting_time(message.text)

@@ -28,7 +28,7 @@ Handlers → Services → Repositories → Models
 ## Status
 
 - Alembic: initial tables → suggestion cycles → suggest topic → vote/meeting polls + winner fields → pending group cards → multi-club → meeting time polls
-- Cycle: open next month → hashtag in group (admin review before poll) or `/suggest` in DM → `/start_vote` → `/close_vote` (runoff on tie; meeting-date poll on a single winner) → `/close_meeting_poll` → optional `/start_meeting_time_poll` (weekends) → `/create_meeting` (`.ics`; date/time can be typed if there was no poll)
+- Cycle: open next month → hashtag in group (admin review before poll) or `/suggest` in DM → `/start_vote` → `/close_vote` (runoff on tie; meeting-date poll on a single winner) → `/close_meeting_poll` → optional `/start_meeting_time_poll` (weekends) → `/create_meeting` (`.ics`; choose the cycle meeting or enter another meeting with its own title/date/time)
 - `/reset_vote` republishes book polls from suggestions since the 1st of the collection month without wiping the cycle
 - Scheduler opens suggestions and starts book polls per bound club (pauses if group cards await review); it does not close them
 - DM uses one active group; `/clubs` is hidden and only needed when a user is in several bound chats

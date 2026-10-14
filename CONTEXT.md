@@ -60,7 +60,7 @@ book_club_bot/
 - `/reset_vote` stops book, date, and time polls without picking a winner and republishes book polls with suggestions from the 1st of the cycle's collection month
 - `/close_meeting_poll` with a single date publishes the date in the group (no admin command in that message) and DMs admins to run `/create_meeting`; weekdays are usually 19:00, so the time poll is not started automatically
 - `/start_meeting_time_poll` publishes a 10:00–19:00 hourly poll (typically weekends); `/close_meeting_time_poll` with a single hour publishes date and time in the group and DMs admins to run `/create_meeting`
-- `/create_meeting` uses the poll-chosen meeting date and hour when they exist; otherwise the admin types the missing pieces (`25.09` / `25.09.2026`, then time). If there is no winner book, the admin types the title before the time. The group gets `event.ics`.
+- `/create_meeting` lets the admin choose the selected cycle meeting or another meeting. The other-meeting path asks for its title, date, and time from scratch and does not use or overwrite cycle poll selections; the selected-cycle path still uses poll-chosen date/hour when available. The group gets `event.ics`.
 - Polls: `is_anonymous=False`; max 10 options; remainder of 1 is split as 9+2; first round allows multiple answers
 - Scheduler (daily at 10:00 in the configured timezone): for each bound club, on `suggest_day` at/after `announce_hour` opens next month; on `vote_day` publishes book polls unless unread group cards are waiting for admin review. Closing polls is always manual
 - `DEBUG=true` lets `/open_suggestions` reset the current month for local testing
