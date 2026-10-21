@@ -1,8 +1,9 @@
 from datetime import date
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiogram.exceptions import TelegramBadRequest
 
 from app.bot.handlers import club_setup
 from app.services.meeting_poll import meeting_date_announcement
@@ -83,6 +84,44 @@ async def test_alternate_book_date_poll_does_not_save_date_to_month_cycle(
     assert announced == meeting_date_announcement(cycle, book, date(2026, 10, 25))
     assert "Board games" in announced
     assert "Board games" in notify_admins.await_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_missing_telegram_poll_is_closed_in_database_and_can_be_restarted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    club = SimpleNamespace(id=7)
+    destination = SimpleNamespace(chat_id=-1007, message_thread_id=None)
+    poll = SimpleNamespace(chat_id=-1007, message_id=101, option_dates=["2026-10-25"])
+    cycle = SimpleNamespace(id=3)
+    service = SimpleNamespace(
+        get_meeting_poll_cycle=AsyncMock(return_value=cycle),
+        require_open_meeting_polls=AsyncMock(return_value=[poll]),
+        book_for_cycle=AsyncMock(return_value=None),
+        mark_meeting_poll_closed=AsyncMock(),
+    )
+    message = SimpleNamespace(
+        chat=SimpleNamespace(id=destination.chat_id),
+        message_thread_id=None,
+        answer=AsyncMock(),
+    )
+    bot = SimpleNamespace(
+        stop_poll=AsyncMock(
+            side_effect=TelegramBadRequest(
+                method=MagicMock(),
+                message="Bad Request: message with poll to stop not found",
+            )
+        )
+    )
+
+    monkeypatch.setattr(club_setup, "require_admin_club", AsyncMock(return_value=club))
+    monkeypatch.setattr(club_setup, "destination_of", lambda _: destination)
+    monkeypatch.setattr(club_setup, "CycleService", lambda *_: service)
+
+    await club_setup.cmd_close_meeting_poll(message, AsyncMock(), bot)
+
+    service.mark_meeting_poll_closed.assert_awaited_once_with(poll)
+    assert "запустить опрос заново" in message.answer.await_args.args[0]
 
 
 @pytest.mark.asyncio
