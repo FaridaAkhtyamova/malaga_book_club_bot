@@ -129,6 +129,12 @@ COMMANDS: tuple[CommandInfo, ...] = (
         admin=True,
     ),
     CommandInfo(
+        "reset_meeting_date",
+        "Сбросить дату встречи книги месяца",
+        "/reset_meeting_date — сбросить сохранённую дату встречи книги месяца",
+        admin=True,
+    ),
+    CommandInfo(
         "start_meeting_time_poll",
         "Опрос времени встречи",
         "/start_meeting_time_poll — опрос времени встречи (часы с 10:00 до 19:00; "

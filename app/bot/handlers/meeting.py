@@ -292,7 +292,7 @@ async def on_meeting_date(
     is_other_meeting = data.get("meeting_mode") == "other"
     if not is_other_meeting:
         cycle = await service.get_latest_cycle()
-        if cycle is not None:
+        if cycle is not None and cycle.meeting_title is None:
             await service.apply_meeting_date(cycle, meeting_day)
 
     book_title = _stored_title(data)

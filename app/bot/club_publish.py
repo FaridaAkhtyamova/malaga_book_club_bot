@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import (
     BufferedInputFile,
     InputPollOption,
@@ -634,8 +634,9 @@ async def stop_meeting_polls(
 ) -> list[tuple[MeetingPoll, list[PollOption]]]:
     stopped: list[tuple[MeetingPoll, list[PollOption]]] = []
     for poll in polls:
-        result = await bot.stop_poll(chat_id=poll.chat_id, message_id=poll.message_id)
-        stopped.append((poll, list(result.options)))
+        options = await _stop_meeting_poll(bot, poll)
+        if options is not None:
+            stopped.append((poll, options))
     return stopped
 
 
@@ -699,6 +700,25 @@ async def stop_meeting_time_polls(
 ) -> list[tuple[MeetingTimePoll, list[PollOption]]]:
     stopped: list[tuple[MeetingTimePoll, list[PollOption]]] = []
     for poll in polls:
-        result = await bot.stop_poll(chat_id=poll.chat_id, message_id=poll.message_id)
-        stopped.append((poll, list(result.options)))
+        options = await _stop_meeting_poll(bot, poll)
+        if options is not None:
+            stopped.append((poll, options))
     return stopped
+
+
+async def _stop_meeting_poll(
+    bot: Bot,
+    poll: MeetingPoll | MeetingTimePoll,
+) -> list[PollOption] | None:
+    try:
+        result = await bot.stop_poll(chat_id=poll.chat_id, message_id=poll.message_id)
+    except TelegramBadRequest as exc:
+        if "message with poll to stop not found" not in str(exc).casefold():
+            raise
+        logger.warning(
+            "Meeting poll %s/%s no longer exists in Telegram; ignoring its votes",
+            poll.chat_id,
+            poll.message_id,
+        )
+        return None
+    return list(result.options)

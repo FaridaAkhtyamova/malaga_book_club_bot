@@ -169,6 +169,58 @@ async def test_meeting_time_poll_retries_without_missing_thread() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("stop_polls", "polls"),
+    [
+        (
+            club_publish.stop_meeting_polls,
+            [
+                SimpleNamespace(chat_id=-100123, message_id=101),
+                SimpleNamespace(chat_id=-100123, message_id=102),
+            ],
+        ),
+        (
+            club_publish.stop_meeting_time_polls,
+            [
+                SimpleNamespace(chat_id=-100123, message_id=101),
+                SimpleNamespace(chat_id=-100123, message_id=102),
+            ],
+        ),
+    ],
+)
+async def test_meeting_close_ignores_missing_telegram_poll_and_stops_remaining(
+    stop_polls,
+    polls,
+) -> None:
+    missing_poll = TelegramBadRequest(
+        method=MagicMock(),
+        message="Bad Request: message with poll to stop not found",
+    )
+    options = [SimpleNamespace(text="19:00", voter_count=2)]
+    bot = AsyncMock()
+    bot.stop_poll.side_effect = [
+        missing_poll,
+        SimpleNamespace(options=options),
+    ]
+
+    stopped = await stop_polls(bot, polls)
+
+    assert stopped == [(polls[1], options)]
+    assert bot.stop_poll.await_count == 2
+
+
+async def test_meeting_close_still_raises_for_other_telegram_errors() -> None:
+    poll = SimpleNamespace(chat_id=-100123, message_id=101)
+    bot = AsyncMock()
+    bot.stop_poll.side_effect = TelegramBadRequest(
+        method=MagicMock(),
+        message="Bad Request: message to stop not found",
+    )
+
+    with pytest.raises(TelegramBadRequest, match="message to stop not found"):
+        await club_publish.stop_meeting_polls(bot, [poll])
+
+
 async def test_meeting_invite_retries_without_missing_thread() -> None:
     bot = AsyncMock()
     bot.send_document.side_effect = [_thread_not_found(), None]
@@ -187,5 +239,4 @@ async def test_meeting_invite_retries_without_missing_thread() -> None:
         456,
         None,
     ]
-
 
