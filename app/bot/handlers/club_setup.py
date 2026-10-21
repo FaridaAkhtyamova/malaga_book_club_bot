@@ -97,7 +97,7 @@ logger = logging.getLogger(__name__)
 
 _CLEAR_TOPIC = frozenset({"clear", "off", "none", "сброс"})
 _MEETING_POLL_STATES = StateFilter(MeetingPollStates)
-_ASK_POLL_TITLE = "Напишите название книги для опроса дат."
+_ASK_POLL_TITLE = "Напишите название встречи для опроса дат."
 _ASK_POLL_BOOK = "Встреча по книге месяца или для другой книги?"
 _POLL_CANCELLED = "Запуск опроса дат отменён."
 
@@ -563,7 +563,6 @@ async def cmd_start_meeting_poll(
     book = await service.book_for_cycle(cycle)
     if book is None:
         await remember_club(state, club)
-        await state.update_data(meeting_title_override=False)
         await state.set_state(MeetingPollStates.waiting_title)
         await message.answer(_ASK_POLL_TITLE)
         return
@@ -623,13 +622,13 @@ async def on_meeting_poll_book_choice(
 
     if callback_data.action == "other":
         await remember_club(state, club)
-        await state.update_data(meeting_title_override=True)
         await state.set_state(MeetingPollStates.waiting_title)
         await callback.answer()
         await origin.answer(_ASK_POLL_TITLE)
         return
 
     book = await service.book_for_cycle(cycle)
+    await service.reset_month_meeting_schedule(cycle)
     await service.clear_meeting_title(cycle)
     await callback.answer()
     await state.clear()
@@ -678,13 +677,8 @@ async def on_meeting_poll_title(
         await message.answer(str(exc))
         return
 
-    data = await state.get_data()
-    override = data.get("meeting_title_override") is True
-    if override:
-        await service.apply_meeting_title(cycle, title)
-        book = await service.book_for_cycle(cycle)
-    else:
-        book = await service.apply_manual_meeting_book(cycle, title)
+    await service.apply_meeting_title(cycle, title)
+    book = await service.book_for_cycle(cycle)
     await state.clear()
     await _finish_meeting_poll(message, bot, dest, service, cycle, meeting_subject(cycle, book))
 
@@ -737,7 +731,8 @@ async def cmd_close_meeting_poll(
     leaders = tallies.leaders()
     if len(leaders) == 1:
         winner_day = leaders[0]
-        await service.apply_meeting_date(cycle, winner_day)
+        if cycle.meeting_title is None:
+            await service.apply_meeting_date(cycle, winner_day)
         try:
             await publish_winner_announcement(
                 bot,
@@ -747,7 +742,11 @@ async def cmd_close_meeting_poll(
         except TelegramAPIError as exc:
             await message.answer(f"Дата выбрана, но анонс не отправился: {exc}")
             return
-        await notify_admins(bot, meeting_date_admin_prompt(book, winner_day), dest.chat_id)
+        await notify_admins(
+            bot,
+            meeting_date_admin_prompt(cycle, book, winner_day),
+            dest.chat_id,
+        )
         if not same_thread:
             await message.answer("Опрос дат закрыт. Дата встречи опубликована в группе.")
         return
@@ -803,7 +802,7 @@ async def cmd_start_meeting_time_poll(
         service,
         cycle,
         meeting_subject(cycle, book),
-        cycle.winner_meeting_date,
+        cycle.winner_meeting_date if cycle.meeting_title is None else None,
     )
 
 
@@ -855,19 +854,22 @@ async def cmd_close_meeting_time_poll(
     leaders = tallies.leaders()
     if len(leaders) == 1:
         winner_hour = leaders[0]
-        await service.apply_meeting_hour(cycle, winner_hour)
+        is_month_book = cycle.meeting_title is None
+        if is_month_book:
+            await service.apply_meeting_hour(cycle, winner_hour)
+        meeting_day = cycle.winner_meeting_date if is_month_book else None
         try:
             await publish_winner_announcement(
                 bot,
                 dest,
-                meeting_time_announcement(cycle, book, cycle.winner_meeting_date, winner_hour),
+                meeting_time_announcement(cycle, book, meeting_day, winner_hour),
             )
         except TelegramAPIError as exc:
             await message.answer(f"Время выбрано, но анонс не отправился: {exc}")
             return
         await notify_admins(
             bot,
-            meeting_time_admin_prompt(book, cycle.winner_meeting_date, winner_hour),
+            meeting_time_admin_prompt(cycle, book, meeting_day, winner_hour),
             dest.chat_id,
         )
         if not same_thread:
@@ -882,7 +884,7 @@ async def cmd_close_meeting_time_poll(
                 dest,
                 meeting_subject(cycle, book),
                 meeting_time_runoff_options(chunk),
-                day=cycle.winner_meeting_date,
+                day=cycle.winner_meeting_date if cycle.meeting_title is None else None,
                 runoff=True,
                 send_intro=index == 0,
             )
@@ -935,14 +937,43 @@ async def cmd_cycle_status(message: Message, session: AsyncSession, bot: Bot) ->
             if chosen:
                 lines.append(f"Выбранная книга: {chosen[0].title}")
         if cycle.winner_meeting_date is not None:
-            meeting_line = f"Дата встречи: {format_meeting_day(cycle.winner_meeting_date)}"
+            meeting_line = (
+                f"Дата встречи книги месяца: {format_meeting_day(cycle.winner_meeting_date)}"
+            )
             if cycle.winner_meeting_hour is not None:
                 meeting_line += f", {format_meeting_hour(cycle.winner_meeting_hour)}"
             lines.append(meeting_line)
         elif cycle.winner_meeting_hour is not None:
-            lines.append(f"Время встречи: {format_meeting_hour(cycle.winner_meeting_hour)}")
+            lines.append(
+                f"Время встречи книги месяца: {format_meeting_hour(cycle.winner_meeting_hour)}"
+            )
 
     await message.answer("\n".join(lines))
+
+
+@dm_router.message(Command("reset_meeting_date"))
+async def cmd_reset_meeting_date(
+    message: Message,
+    session: AsyncSession,
+    bot: Bot,
+) -> None:
+    club = await require_admin_club(message, bot, session)
+    if club is None:
+        return
+    service = CycleService(session, club)
+    cycle = await service.get_latest_cycle()
+    if cycle is None:
+        await message.answer("Нет цикла с датой встречи книги месяца.")
+        return
+    try:
+        reset = await service.reset_month_meeting_date(cycle)
+    except MeetingPollsAlreadyOpenError as exc:
+        await message.answer(str(exc))
+        return
+    if not reset:
+        await message.answer("Дата встречи книги месяца ещё не выбрана.")
+        return
+    await message.answer("Дата встречи книги месяца сброшена.")
 
 
 def _day_setting_text(day: int | None) -> str:

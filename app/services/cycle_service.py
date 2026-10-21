@@ -398,17 +398,6 @@ class CycleService:
     async def apply_winner(self, cycle: SuggestionCycle, book: Book) -> SuggestionCycle:
         return await self.cycle_vote_repo.set_winner(cycle, book.id)
 
-    async def apply_manual_meeting_book(self, cycle: SuggestionCycle, title: str) -> Book:
-        book = await self.book_repo.create_manual(
-            title=title,
-            authors=None,
-            description=None,
-            page_count=None,
-        )
-        await self.apply_winner(cycle, book)
-        await self.clear_meeting_title(cycle)
-        return book
-
     async def apply_meeting_title(self, cycle: SuggestionCycle, title: str) -> SuggestionCycle:
         return await self.cycle_vote_repo.set_meeting_title(cycle, title[:255])
 
@@ -452,7 +441,7 @@ class CycleService:
             return None, meeting_day, meeting_hour
         override = (cycle.meeting_title or "").strip() or None
         if override is not None:
-            return override, meeting_day, meeting_hour
+            return override, None, None
         book = await self.book_for_cycle(cycle)
         if book is None:
             return None, meeting_day, meeting_hour
@@ -468,11 +457,23 @@ class CycleService:
             raise MeetingPollsAlreadyOpenError(
                 "Опрос дат уже идёт. Когда время вышло, закройте его командой /close_meeting_poll."
             )
+        return cycle
+
+    async def reset_month_meeting_schedule(self, cycle: SuggestionCycle) -> None:
         if cycle.winner_meeting_date is not None:
             await self.cycle_vote_repo.clear_meeting_date(cycle)
         if cycle.winner_meeting_hour is not None:
             await self.cycle_vote_repo.clear_meeting_hour(cycle)
-        return cycle
+
+    async def reset_month_meeting_date(self, cycle: SuggestionCycle) -> bool:
+        if await self.meeting_poll_repo.list_open(cycle.id):
+            raise MeetingPollsAlreadyOpenError(
+                "Сначала закройте опрос дат командой /close_meeting_poll."
+            )
+        if cycle.winner_meeting_date is None:
+            return False
+        await self.cycle_vote_repo.clear_meeting_date(cycle)
+        return True
 
     async def get_meeting_poll_cycle(self) -> SuggestionCycle:
         cycle = await self.get_latest_cycle()
@@ -518,7 +519,7 @@ class CycleService:
                 "Опрос времени уже идёт. Когда время вышло, закройте его "
                 "командой /close_meeting_time_poll."
             )
-        if cycle.winner_meeting_hour is not None:
+        if cycle.meeting_title is None and cycle.winner_meeting_hour is not None:
             await self.cycle_vote_repo.clear_meeting_hour(cycle)
         return cycle
 

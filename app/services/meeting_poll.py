@@ -275,22 +275,27 @@ def meeting_date_announcement(
     book: Book | None,
     day: date,
 ) -> str:
-    title = meeting_poll_title(book) if book is not None else meeting_subject(cycle)
+    title = meeting_subject(cycle, book)
     return f"📅 Встреча по «{title}»: {format_meeting_day(day)}."
 
 
-def meeting_date_admin_prompt(book: Book | None, day: date) -> str:
+def meeting_date_admin_prompt(
+    cycle: SuggestionCycle,
+    book: Book | None,
+    day: date,
+) -> str:
     formatted = format_meeting_day(day)
     weekend = day.weekday() >= 5
-    if book is None:
+    title = meeting_subject(cycle, book)
+    if cycle.meeting_title is not None or book is None:
         prompt = (
-            f"Дата встречи выбрана: {formatted}.\n"
-            "Напишите /create_meeting, затем название книги и время — "
+            f"Дата встречи по «{title}»: {formatted}.\n"
+            "Напишите /create_meeting, затем укажите дату и время — "
             "опубликуется приглашение в календарь."
         )
     else:
         prompt = (
-            f"Дата встречи по «{meeting_poll_title(book)}»: {formatted}.\n"
+            f"Дата встречи по книге месяца «{title}»: {formatted}.\n"
             "Напишите /create_meeting и укажите время — "
             "опубликуется приглашение в календарь."
         )
@@ -403,23 +408,29 @@ def meeting_time_announcement(
     day: date | None,
     hour: int,
 ) -> str:
-    title = meeting_poll_title(book) if book is not None else meeting_subject(cycle)
+    title = meeting_subject(cycle, book)
     clock = format_meeting_hour(hour)
     if day is None:
         return f"📅 Встреча по «{title}»: {clock}."
     return f"📅 Встреча по «{title}»: {format_meeting_day(day)}, {clock}."
 
 
-def meeting_time_admin_prompt(book: Book | None, day: date | None, hour: int) -> str:
+def meeting_time_admin_prompt(
+    cycle: SuggestionCycle,
+    book: Book | None,
+    day: date | None,
+    hour: int,
+) -> str:
     clock = format_meeting_hour(hour)
     when = f"{format_meeting_day(day)}, {clock}" if day is not None else clock
-    if book is None:
+    title = meeting_subject(cycle, book)
+    if cycle.meeting_title is not None or book is None:
         return (
-            f"Время встречи выбрано: {when}.\n"
+            f"Время встречи по «{title}» выбрано: {when}.\n"
             "Напишите /create_meeting — опубликуется приглашение в календарь."
         )
     return (
-        f"Время встречи по «{meeting_poll_title(book)}»: {when}.\n"
+        f"Время встречи по книге месяца «{title}»: {when}.\n"
         "Напишите /create_meeting — опубликуется приглашение в календарь."
     )
 

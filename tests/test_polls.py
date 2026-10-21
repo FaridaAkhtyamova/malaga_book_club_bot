@@ -227,10 +227,21 @@ def test_merge_hour_counts_adds_votes() -> None:
 
 
 def test_meeting_time_announcement_includes_date_and_hour() -> None:
-    cycle = SimpleNamespace(target_month=10)
+    cycle = SimpleNamespace(target_month=10, meeting_title=None)
     book = _book(1)
     book.title = "Dune"
     text = meeting_time_announcement(cycle, book, date(2026, 10, 25), 19)
     assert "Dune" in text
     assert "19:00" in text
     assert "25 октября" in text
+
+
+def test_alternate_meeting_announcement_uses_alternate_title() -> None:
+    cycle = SimpleNamespace(target_month=10, meeting_title="Board games")
+    book = _book(1)
+    book.title = "Dune"
+
+    text = meeting_time_announcement(cycle, book, None, 19)
+
+    assert "Board games" in text
+    assert "Dune" not in text

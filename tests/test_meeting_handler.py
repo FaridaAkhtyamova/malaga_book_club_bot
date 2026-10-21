@@ -145,6 +145,58 @@ async def test_manual_meeting_date_does_not_update_or_reuse_cycle_poll_data(
 
 
 @pytest.mark.asyncio
+async def test_alternate_book_date_does_not_update_month_cycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    club = SimpleNamespace(id=7)
+    destination = SimpleNamespace(chat_id=-1007, message_thread_id=None)
+    cycle = SimpleNamespace(meeting_title="Board games")
+    service = SimpleNamespace(
+        get_latest_cycle=AsyncMock(return_value=cycle),
+        apply_meeting_date=AsyncMock(),
+        get_selected_meeting=AsyncMock(return_value=("Board games", None, None)),
+    )
+    state = AsyncMock()
+    state.get_data.return_value = {
+        "meeting_mode": "cycle",
+        "book_title": "Board games",
+        "meeting_date": None,
+        "meeting_hour": None,
+    }
+    message = SimpleNamespace(text="31.12.2099", answer=AsyncMock())
+
+    monkeypatch.setattr(meeting, "club_from_state", AsyncMock(return_value=club))
+    monkeypatch.setattr(meeting, "remember_club", AsyncMock())
+    monkeypatch.setattr(meeting, "destination_of", lambda _: destination)
+    monkeypatch.setattr(meeting, "CycleService", lambda *_: service)
+
+    await meeting.on_meeting_date(message, AsyncMock(), state, AsyncMock())
+
+    service.get_latest_cycle.assert_awaited_once()
+    service.apply_meeting_date.assert_not_awaited()
+    state.set_state.assert_awaited_once_with(MeetingInviteStates.waiting_time)
+
+
+@pytest.mark.asyncio
+async def test_alternate_cycle_title_does_not_supply_month_date_or_time() -> None:
+    from app.services.cycle_service import CycleService
+
+    cycle = SimpleNamespace(
+        meeting_title="Board games",
+        winner_meeting_date=date(2099, 12, 31),
+        winner_meeting_hour=19,
+    )
+    service = CycleService(AsyncMock(), SimpleNamespace(id=7))
+    service.get_latest_cycle = AsyncMock(return_value=cycle)  # type: ignore[method-assign]
+    service.book_for_cycle = AsyncMock()
+
+    selected = await service.get_selected_meeting()
+
+    assert selected == ("Board games", None, None)
+    service.book_for_cycle.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_other_meeting_choice_clears_cycle_title_date_and_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
